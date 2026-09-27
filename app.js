@@ -3,6 +3,48 @@
   'use strict';
 
   const $ = (id) => document.getElementById(id);
+
+  function ensureExtendedControls() {
+    const aside = document.querySelector('aside.card');
+    if (aside && !document.getElementById('weighting')) {
+      const row = document.createElement('div');
+      row.className = 'sideRow';
+      const label = document.createElement('label');
+      label.textContent = 'Frekvenční vážení';
+      const select = document.createElement('select');
+      select.id = 'weighting';
+      select.style.width = '100%';
+      [['A','A – vnímání lidského sluchu'],['C','C – hlasité a nízké zvuky'],['Z','Z – bez frekvenčního vážení']].forEach(([value,text]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = text;
+        select.appendChild(option);
+      });
+      const note = document.createElement('p');
+      note.className = 'note';
+      note.textContent = 'A potlačuje hlavně nízké frekvence, C méně a Z je bez vážení.';
+      row.append(label, select, note);
+      const heading = aside.querySelector('h2');
+      heading?.insertAdjacentElement('afterend', row);
+    }
+    if (!document.getElementById('freqCalBtn')) {
+      const grid = document.getElementById('calGrid');
+      if (grid) {
+        const btn = document.createElement('button');
+        btn.id = 'freqCalBtn';
+        btn.textContent = 'Kalibrovat aktuální tón';
+        btn.style.marginBottom = '8px';
+        grid.insertAdjacentElement('beforebegin', btn);
+      }
+    }
+    const mode = document.getElementById('spectrumMode');
+    if (mode?.options?.length >= 2) {
+      mode.options[0].textContent = 'Graf FFT';
+      mode.options[1].textContent = 'Sloupce 1/3 oktávy';
+    }
+  }
+  ensureExtendedControls();
+
   const startBtn = $('startBtn');
   const stopBtn = $('stopBtn');
   const resetBtn = $('resetBtn');
@@ -47,10 +89,7 @@
   };
 
   const CAL_FREQS = [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
-  const THIRD_OCT = [
-    25,31.5,40,50,63,80,100,125,160,200,250,315,400,500,630,800,
-    1000,1250,1600,2000,2500,3150,4000,5000,6300,8000,10000,12500,16000,20000
-  ];
+  const THIRD_OCT = [25,31.5,40,50,63,80,100,125,160,200,250,315,400,500,630,800,1000,1250,1600,2000,2500,3150,4000,5000,6300,8000,10000,12500,16000,20000];
 
   let offsetDB = loadNumber(LS.offset, 40);
   let freqCalibration = loadCalibration();
@@ -64,7 +103,6 @@
   let raf = 0;
   let frameCounter = 0;
   let lastRawDbfs = NaN;
-  let lastDisplayDb = NaN;
   let lastPeakHz = NaN;
   let minDB = Infinity;
   let maxDB = -Infinity;
@@ -117,9 +155,7 @@
   function renderUnits() {
     const w = weightingLabel();
     unitOut.textContent = showSPL.checked ? `dB${w}` : `dBFS (${w})`;
-    subOut.textContent = showSPL.checked
-      ? `${w}-vážení · kalibrované pomocí uloženého offsetu`
-      : `${w}-vážení · relativní úroveň bez SPL offsetu`;
+    subOut.textContent = showSPL.checked ? `${w}-vážení · kalibrované pomocí uloženého offsetu` : `${w}-vážení · relativní úroveň bez SPL offsetu`;
   }
 
   function renderCalibrationGrid() {
@@ -274,9 +310,7 @@
     }
     lastPeakHz = bestHz;
     peakFreq.textContent = Number.isFinite(bestHz) ? Math.round(bestHz) : '--';
-    peakNote.textContent = Number.isFinite(bestHz)
-      ? `maximum spektra po ${weightingLabel()}-vážení`
-      : '—';
+    peakNote.textContent = Number.isFinite(bestHz) ? `maximum spektra po ${weightingLabel()}-vážení` : '—';
   }
 
   function mapMeter(db) {
@@ -291,12 +325,7 @@
     setStatus('žádám o mikrofon…');
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          channelCount: 1
-        }
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 }
       });
     } catch (err) {
       console.error(err);
@@ -360,7 +389,6 @@
     const { binHz } = getSpectrum();
     const delta = spectralDeltaDb(weighting.value, binHz);
     const disp = displayedDb(lastRawDbfs, delta);
-    lastDisplayDb = disp;
 
     minDB = Math.min(minDB, disp);
     maxDB = Math.max(maxDB, disp);
@@ -484,7 +512,7 @@
     ticks.forEach(f => {
       if (f < fMin || f > fMax) return;
       const x = xForFreq(f);
-      ctx.fillText(f >= 1000 ? `${f/1000}k` : String(f), x, baseline + 18);
+      ctx.fillText(f >= 1000 ? `${f / 1000}k` : String(f), x, baseline + 18);
     });
   }
 
@@ -516,10 +544,7 @@
   }
 
   function nearestCalibrationFrequency(freq) {
-    return CAL_FREQS.reduce((best, f) =>
-      Math.abs(Math.log(f / freq)) < Math.abs(Math.log(best / freq)) ? f : best,
-      CAL_FREQS[0]
-    );
+    return CAL_FREQS.reduce((best, f) => Math.abs(Math.log(f / freq)) < Math.abs(Math.log(best / freq)) ? f : best, CAL_FREQS[0]);
   }
 
   function calibrateSpl() {
