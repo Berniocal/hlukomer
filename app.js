@@ -1,53 +1,16 @@
-/* Hlukoměr PWA – spektrum, A/C/Z vážení a frekvenční kalibrace. */
+/* Hlukoměr PWA – spektrum, A/C/Z vážení, kalibrace, ukládání a export. */
 (() => {
   'use strict';
 
-  const $ = (id) => document.getElementById(id);
-
-  function ensureExtendedControls() {
-    const aside = document.querySelector('aside.card');
-    if (aside && !document.getElementById('weighting')) {
-      const row = document.createElement('div');
-      row.className = 'sideRow';
-      const label = document.createElement('label');
-      label.textContent = 'Frekvenční vážení';
-      const select = document.createElement('select');
-      select.id = 'weighting';
-      select.style.width = '100%';
-      [['A','A – vnímání lidského sluchu'],['C','C – hlasité a nízké zvuky'],['Z','Z – bez frekvenčního vážení']].forEach(([value,text]) => {
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = text;
-        select.appendChild(option);
-      });
-      const note = document.createElement('p');
-      note.className = 'note';
-      note.textContent = 'A potlačuje hlavně nízké frekvence, C méně a Z je bez vážení.';
-      row.append(label, select, note);
-      const heading = aside.querySelector('h2');
-      heading?.insertAdjacentElement('afterend', row);
-    }
-    if (!document.getElementById('freqCalBtn')) {
-      const grid = document.getElementById('calGrid');
-      if (grid) {
-        const btn = document.createElement('button');
-        btn.id = 'freqCalBtn';
-        btn.textContent = 'Kalibrovat aktuální tón';
-        btn.style.marginBottom = '8px';
-        grid.insertAdjacentElement('beforebegin', btn);
-      }
-    }
-    const mode = document.getElementById('spectrumMode');
-    if (mode?.options?.length >= 2) {
-      mode.options[0].textContent = 'Graf FFT';
-      mode.options[1].textContent = 'Sloupce 1/3 oktávy';
-    }
-  }
-  ensureExtendedControls();
+  const $ = id => document.getElementById(id);
 
   const startBtn = $('startBtn');
   const stopBtn = $('stopBtn');
   const resetBtn = $('resetBtn');
+  const saveMeasurementBtn = $('saveMeasurementBtn');
+  const exportExcelBtn = $('exportExcelBtn');
+  const savedMeasurementsEl = $('savedMeasurements');
+
   const dbOut = $('dbOut');
   const unitOut = $('unitOut');
   const subOut = $('subOut');
@@ -56,7 +19,9 @@
   const maxOut = $('maxOut');
   const minOut = $('minOut');
   const avgOut = $('avgOut');
+  const measureAvgOut = $('measureAvgOut');
   const bar = $('bar');
+
   const permWarn = $('permWarn');
   const showSPL = $('showSPL');
   const holdPeak = $('holdPeak');
@@ -65,6 +30,7 @@
   const calibrateBtn = $('calibrateBtn');
   const freqCalBtn = $('freqCalBtn');
   const zeroCalBtn = $('zeroCalBtn');
+  const displayResponse = $('displayResponse');
   const fftSizeSelect = $('fftSize');
   const resolutionNote = $('resolutionNote');
   const spectrumMode = $('spectrumMode');
@@ -72,6 +38,7 @@
   const peakFreq = $('peakFreq');
   const peakNote = $('peakNote');
   const calGrid = $('calGrid');
+
   const spectrumCanvas = $('spectrumChart');
   const historyCanvas = $('historyChart');
   const sctx = spectrumCanvas.getContext('2d');
@@ -85,11 +52,16 @@
     fft: 'hlukomer.fftSize.v2',
     mode: 'hlukomer.spectrumMode.v2',
     scale: 'hlukomer.freqScale.v2',
-    freqCal: 'hlukomer.freqCalibration.v2'
+    freqCal: 'hlukomer.freqCalibration.v2',
+    response: 'hlukomer.displayResponse.v1',
+    measurements: 'hlukomer.measurements.v1'
   };
 
   const CAL_FREQS = [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
   const THIRD_OCT = [25,31.5,40,50,63,80,100,125,160,200,250,315,400,500,630,800,1000,1250,1600,2000,2500,3150,4000,5000,6300,8000,10000,12500,16000,20000];
+  const HISTORY_MS = 30000;
+  const MAX_SAVED_MEASUREMENTS = 10;
+  const MAX_SESSION_SAMPLES = 7200;
 
   function loadNumber(key, fallback) {
     const raw = localStorage.getItem(key);
@@ -98,8 +70,31 @@
     return Number.isFinite(n) ? n : fallback;
   }
 
+  function loadCalibration() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(LS.freqCal) || '{}');
+      return Object.fromEntries(CAL_FREQS.map(f => {
+        const n = Number(parsed[f]);
+        return [f, Number.isFinite(n) ? n : 0];
+      }));
+    } catch (_) {
+      return Object.fromEntries(CAL_FREQS.map(f => [f, 0]));
+    }
+  }
+
+  function loadMeasurements() {
+    try {
+      const data = JSON.parse(localStorage.getItem(LS.measurements) || '[]');
+      return Array.isArray(data) ? data : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
   let offsetDB = loadNumber(LS.offset, loadNumber('noiseMeterOffsetDB', 40));
   let freqCalibration = loadCalibration();
+  let savedMeasurements = loadMeasurements();
+
   let audioCtx = null;
   let stream = null;
   let source = null;
@@ -111,25 +106,23 @@
   let frameCounter = 0;
   let lastRawDbfs = NaN;
   let lastPeakHz = NaN;
+
   let minDB = Infinity;
   let maxDB = -Infinity;
   const history = [];
   const historyTimes = [];
-  const HISTORY_MS = 30000;
 
-  function loadCalibration() {
-    try {
-      const parsed = JSON.parse(localStorage.getItem(LS.freqCal) || '{}');
-      const out = {};
-      CAL_FREQS.forEach(f => {
-        const n = Number(parsed[f]);
-        out[f] = Number.isFinite(n) ? n : 0;
-      });
-      return out;
-    } catch (_) {
-      return Object.fromEntries(CAL_FREQS.map(f => [f, 0]));
-    }
-  }
+  let smoothedPower = NaN;
+  let lastSmoothAt = 0;
+  let lastLoopAt = 0;
+
+  let sessionId = null;
+  let sessionStartedAt = null;
+  let sessionEndedAt = null;
+  let sessionEnergy = 0;
+  let sessionDurationMs = 0;
+  let sessionSamples = [];
+  let lastStoredSampleAt = 0;
 
   function saveSettings() {
     localStorage.setItem(LS.offset, String(offsetDB));
@@ -140,30 +133,46 @@
     localStorage.setItem(LS.mode, spectrumMode.value);
     localStorage.setItem(LS.scale, freqScale.value);
     localStorage.setItem(LS.freqCal, JSON.stringify(freqCalibration));
+    localStorage.setItem(LS.response, displayResponse.value);
+  }
+
+  function persistMeasurements() {
+    savedMeasurements = savedMeasurements.slice(0, MAX_SAVED_MEASUREMENTS);
+    try {
+      localStorage.setItem(LS.measurements, JSON.stringify(savedMeasurements));
+    } catch (_) {
+      savedMeasurements = savedMeasurements.map(m => ({ ...m, samples: (m.samples || []).filter((_, i) => i % 2 === 0) }));
+      try { localStorage.setItem(LS.measurements, JSON.stringify(savedMeasurements)); } catch (_) {}
+    }
   }
 
   showSPL.checked = (localStorage.getItem(LS.spl) ?? localStorage.getItem('noiseMeterShowSPL') ?? '1') === '1';
   holdPeak.checked = (localStorage.getItem(LS.hold) ?? localStorage.getItem('noiseMeterHoldPeak') ?? '0') === '1';
+
   const savedWeighting = localStorage.getItem(LS.weighting);
-  if (savedWeighting) {
-    weighting.value = savedWeighting;
-  } else {
+  if (savedWeighting) weighting.value = savedWeighting;
+  else {
     const oldA = localStorage.getItem('noiseMeterAWeight');
     weighting.value = oldA === null ? 'A' : (oldA === '1' ? 'A' : 'Z');
   }
+
   fftSizeSelect.value = localStorage.getItem(LS.fft) || '4096';
   spectrumMode.value = localStorage.getItem(LS.mode) || 'line';
   freqScale.value = localStorage.getItem(LS.scale) || 'log';
+  displayResponse.value = localStorage.getItem(LS.response) || '0.8';
   offsetNum.value = offsetDB.toFixed(1);
 
   function weightingLabel() {
     return weighting.value === 'A' ? 'A' : weighting.value === 'C' ? 'C' : 'Z';
   }
 
+  function unitLabel() {
+    return showSPL.checked ? `dB${weightingLabel()}` : `dBFS (${weightingLabel()})`;
+  }
+
   function renderUnits() {
-    const w = weightingLabel();
-    unitOut.textContent = showSPL.checked ? `dB${w}` : `dBFS (${w})`;
-    subOut.textContent = showSPL.checked ? `${w}-vážení · kalibrované pomocí uloženého offsetu` : `${w}-vážení · relativní úroveň bez SPL offsetu`;
+    unitOut.textContent = unitLabel();
+    subOut.textContent = '';
   }
 
   function renderCalibrationGrid() {
@@ -186,11 +195,45 @@
         freqCalibration[freq] = Math.max(-30, Math.min(30, v));
         saveSettings();
       });
-      const suffix = document.createElement('span');
-      suffix.className = 'calunit';
-      suffix.textContent = ' dB';
-      box.append(label, input, suffix);
+      box.append(label, input);
       calGrid.appendChild(box);
+    });
+  }
+
+  function renderSavedMeasurements() {
+    savedMeasurementsEl.innerHTML = '';
+    if (!savedMeasurements.length) {
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = 'Žádná uložená měření';
+      savedMeasurementsEl.appendChild(empty);
+      return;
+    }
+
+    savedMeasurements.forEach(item => {
+      const row = document.createElement('div');
+      row.className = 'savedItem';
+      const main = document.createElement('div');
+      main.className = 'savedMain';
+      const title = document.createElement('div');
+      title.className = 'savedTitle';
+      const d = new Date(item.startedAt);
+      title.textContent = `${d.toLocaleDateString('cs-CZ')} ${d.toLocaleTimeString('cs-CZ', {hour:'2-digit', minute:'2-digit'})}`;
+      const meta = document.createElement('div');
+      meta.className = 'savedMeta';
+      meta.textContent = `${formatDuration(item.durationSec)} · ${fmt(item.average)} ${item.unit || 'dB'}`;
+      main.append(title, meta);
+
+      const del = document.createElement('button');
+      del.className = 'savedDelete';
+      del.textContent = 'Smazat';
+      del.addEventListener('click', () => {
+        savedMeasurements = savedMeasurements.filter(m => m.id !== item.id);
+        persistMeasurements();
+        renderSavedMeasurements();
+      });
+      row.append(main, del);
+      savedMeasurementsEl.appendChild(row);
     });
   }
 
@@ -202,13 +245,17 @@
     return `${freq} Hz`;
   }
 
-  function setStatus(text) {
-    statusPill.textContent = text;
+  function formatDuration(sec) {
+    sec = Math.max(0, Math.round(sec || 0));
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (h) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    return `${m}:${String(s).padStart(2,'0')}`;
   }
 
-  function fmt(v) {
-    return Number.isFinite(v) ? v.toFixed(1) : '--';
-  }
+  function setStatus(text) { statusPill.textContent = text; }
+  function fmt(v) { return Number.isFinite(v) ? v.toFixed(1) : '--'; }
 
   function weightDb(freq, type) {
     if (!(freq > 0)) return -120;
@@ -255,8 +302,7 @@
   function getSpectrum() {
     analyser.getFloatFrequencyData(freqData);
     const nyquist = audioCtx.sampleRate / 2;
-    const binHz = nyquist / freqData.length;
-    return { binHz, nyquist };
+    return { binHz: nyquist / freqData.length, nyquist };
   }
 
   function spectralDeltaDb(type, binHz) {
@@ -282,25 +328,95 @@
     return showSPL.checked ? weightedDbfs + offsetDB : weightedDbfs;
   }
 
+  function smoothDb(db, now) {
+    const p = Math.pow(10, db / 10);
+    if (!Number.isFinite(smoothedPower) || !lastSmoothAt) {
+      smoothedPower = p;
+      lastSmoothAt = now;
+      return db;
+    }
+    const dt = Math.max(1, Math.min(250, now - lastSmoothAt));
+    lastSmoothAt = now;
+    const tauMs = Math.max(50, Number(displayResponse.value || 0.8) * 1000);
+    const alpha = 1 - Math.exp(-dt / tauMs);
+    smoothedPower += alpha * (p - smoothedPower);
+    return 10 * Math.log10(Math.max(smoothedPower, 1e-20));
+  }
+
+  function energyAverage(values) {
+    if (!values.length) return NaN;
+    let sum = 0;
+    values.forEach(v => { if (Number.isFinite(v)) sum += Math.pow(10, v / 10); });
+    return sum > 0 ? 10 * Math.log10(sum / values.length) : NaN;
+  }
+
   function averageRecent(sec) {
     const cutoff = performance.now() - sec * 1000;
-    let sum = 0, n = 0;
+    const values = [];
     for (let i = history.length - 1; i >= 0; i--) {
       if (historyTimes[i] < cutoff) break;
-      sum += history[i];
-      n++;
+      values.push(history[i]);
     }
-    return n ? sum / n : NaN;
+    return energyAverage(values);
+  }
+
+  function currentMeasurementAverage() {
+    if (!(sessionDurationMs > 0) || !(sessionEnergy > 0)) return NaN;
+    return 10 * Math.log10(sessionEnergy / sessionDurationMs);
+  }
+
+  function beginSession() {
+    minDB = Infinity;
+    maxDB = -Infinity;
+    history.length = 0;
+    historyTimes.length = 0;
+    smoothedPower = NaN;
+    lastSmoothAt = 0;
+    lastLoopAt = 0;
+    sessionId = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+    sessionStartedAt = new Date();
+    sessionEndedAt = null;
+    sessionEnergy = 0;
+    sessionDurationMs = 0;
+    sessionSamples = [];
+    lastStoredSampleAt = 0;
+    maxOut.textContent = minOut.textContent = avgOut.textContent = measureAvgOut.textContent = '--';
+    dbOut.textContent = instOut.textContent = '--';
+    bar.style.width = '0%';
+    saveMeasurementBtn.disabled = true;
+  }
+
+  function resetCurrentMeasurement() {
+    if (running) beginSession();
+    else {
+      minDB = Infinity;
+      maxDB = -Infinity;
+      history.length = 0;
+      historyTimes.length = 0;
+      smoothedPower = NaN;
+      lastSmoothAt = 0;
+      lastLoopAt = 0;
+      sessionId = null;
+      sessionStartedAt = null;
+      sessionEndedAt = null;
+      sessionEnergy = 0;
+      sessionDurationMs = 0;
+      sessionSamples = [];
+      dbOut.textContent = instOut.textContent = maxOut.textContent = minOut.textContent = avgOut.textContent = measureAvgOut.textContent = '--';
+      bar.style.width = '0%';
+      saveMeasurementBtn.disabled = true;
+      drawEmptyCharts();
+    }
   }
 
   function updateResolutionNote() {
     const fft = Number(fftSizeSelect.value);
     if (!audioCtx) {
-      resolutionNote.textContent = `Vyšší FFT = jemnější rozlišení frekvence. Aktuálně ${fft} vzorků.`;
+      resolutionNote.textContent = `${fft}`;
       return;
     }
     const hz = audioCtx.sampleRate / fft;
-    resolutionNote.textContent = `Rozlišení ≈ ${hz.toFixed(1)} Hz · vzorkování ${Math.round(audioCtx.sampleRate)} Hz`;
+    resolutionNote.textContent = `${hz.toFixed(1)} Hz`;
   }
 
   function updatePeak(binHz) {
@@ -318,7 +434,7 @@
     }
     lastPeakHz = bestHz;
     peakFreq.textContent = Number.isFinite(bestHz) ? Math.round(bestHz) : '--';
-    peakNote.textContent = Number.isFinite(bestHz) ? `maximum spektra po ${weightingLabel()}-vážení` : '—';
+    peakNote.textContent = '';
   }
 
   function mapMeter(db) {
@@ -330,7 +446,7 @@
   async function start() {
     if (running) return;
     permWarn.style.display = 'none';
-    setStatus('žádám o mikrofon…');
+    setStatus('mikrofon…');
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 }
@@ -356,7 +472,7 @@
     running = true;
     startBtn.disabled = true;
     stopBtn.disabled = false;
-    resetStats();
+    beginSession();
     setStatus('měřím');
     updateResolutionNote();
     loop();
@@ -367,8 +483,18 @@
     freqData = new Float32Array(analyser.frequencyBinCount);
   }
 
+  function addFinalSample() {
+    if (!sessionStartedAt || !history.length || sessionSamples.length >= MAX_SESSION_SAMPLES) return;
+    const lastDb = history[history.length - 1];
+    const lastSec = sessionSamples.length ? sessionSamples[sessionSamples.length - 1].t : -1;
+    const sec = sessionDurationMs / 1000;
+    if (sec - lastSec > 0.25) sessionSamples.push({ t: Number(sec.toFixed(2)), db: Number(lastDb.toFixed(2)) });
+  }
+
   function stop() {
     if (!running) return;
+    addFinalSample();
+    sessionEndedAt = new Date();
     running = false;
     cancelAnimationFrame(raf);
     try { source?.disconnect(); } catch (_) {}
@@ -379,33 +505,41 @@
     timeData = freqData = null;
     startBtn.disabled = false;
     stopBtn.disabled = true;
+    saveMeasurementBtn.disabled = !(sessionDurationMs > 0);
     setStatus('zastaveno');
-    subOut.textContent = 'Měření zastaveno.';
-  }
-
-  function resetStats() {
-    minDB = Infinity;
-    maxDB = -Infinity;
-    history.length = 0;
-    historyTimes.length = 0;
-    maxOut.textContent = minOut.textContent = avgOut.textContent = '--';
   }
 
   function loop() {
     if (!running) return;
+
     lastRawDbfs = computeRawRmsDbfs();
     const { binHz } = getSpectrum();
     const delta = spectralDeltaDb(weighting.value, binHz);
-    const disp = displayedDb(lastRawDbfs, delta);
+    const rawDisplay = displayedDb(lastRawDbfs, delta);
+    const now = performance.now();
+    const disp = smoothDb(rawDisplay, now);
+
+    if (lastLoopAt) {
+      const dt = Math.max(0, Math.min(250, now - lastLoopAt));
+      if (dt > 0) {
+        sessionEnergy += Math.pow(10, rawDisplay / 10) * dt;
+        sessionDurationMs += dt;
+      }
+    }
+    lastLoopAt = now;
 
     minDB = Math.min(minDB, disp);
     maxDB = Math.max(maxDB, disp);
-    const now = performance.now();
     history.push(disp);
     historyTimes.push(now);
     while (historyTimes.length && historyTimes[0] < now - HISTORY_MS) {
       historyTimes.shift();
       history.shift();
+    }
+
+    if (sessionSamples.length < MAX_SESSION_SAMPLES && (!lastStoredSampleAt || now - lastStoredSampleAt >= 1000)) {
+      sessionSamples.push({ t: Number((sessionDurationMs / 1000).toFixed(2)), db: Number(disp.toFixed(2)) });
+      lastStoredSampleAt = now;
     }
 
     const hero = holdPeak.checked ? maxDB : disp;
@@ -414,7 +548,9 @@
     maxOut.textContent = fmt(maxDB);
     minOut.textContent = fmt(minDB);
     avgOut.textContent = fmt(averageRecent(5));
+    measureAvgOut.textContent = fmt(currentMeasurementAverage());
     bar.style.width = `${mapMeter(hero).toFixed(1)}%`;
+    saveMeasurementBtn.disabled = !(sessionDurationMs > 500);
 
     updatePeak(binHz);
     if ((frameCounter++ % 2) === 0) {
@@ -430,6 +566,11 @@
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 
+  function drawEmptyCharts() {
+    clearCanvas(sctx, spectrumCanvas);
+    clearCanvas(hctx, historyCanvas);
+  }
+
   function drawSpectrum(binHz) {
     const c = spectrumCanvas, ctx = sctx;
     clearCanvas(ctx, c);
@@ -441,11 +582,11 @@
 
     drawGrid(ctx, c, padL, padR, padT, padB, yMin, yMax);
 
-    const xForFreq = (f) => {
+    const xForFreq = f => {
       if (freqScale.value === 'linear') return padL + w * ((f - fMin) / (fMax - fMin));
       return padL + w * ((Math.log10(f) - Math.log10(fMin)) / (Math.log10(fMax) - Math.log10(fMin)));
     };
-    const yForDb = (db) => padT + h * (1 - (db - yMin) / (yMax - yMin));
+    const yForDb = db => padT + h * (1 - (db - yMin) / (yMax - yMin));
 
     drawFreqLabels(ctx, xForFreq, padT + h, fMin, fMax);
 
@@ -471,7 +612,7 @@
     ctx.fillStyle = '#93a4ba';
     ctx.font = '12px system-ui';
     ctx.textAlign = 'left';
-    ctx.fillText(`relativní dB · ${weightingLabel()}-vážení`, padL, 13);
+    ctx.fillText(`relativní dB · ${weightingLabel()}`, padL, 13);
   }
 
   function drawThirdOctaveBars(ctx, xForFreq, yForDb, binHz, fMin, fMax, yMin) {
@@ -505,7 +646,8 @@
     ctx.fillStyle = '#93a4ba';
     ctx.font = '11px system-ui';
     ctx.textAlign = 'right';
-    for (let db = yMin; db <= yMax; db += 20) {
+    const step = (yMax - yMin) <= 80 ? 20 : 20;
+    for (let db = yMin; db <= yMax; db += step) {
       const y = padT + h * (1 - (db - yMin) / (yMax - yMin));
       ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + w, y); ctx.stroke();
       ctx.fillText(String(db), padL - 7, y + 4);
@@ -513,14 +655,13 @@
   }
 
   function drawFreqLabels(ctx, xForFreq, baseline, fMin, fMax) {
-    const ticks = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+    const ticks = [20,50,100,200,500,1000,2000,5000,10000,20000];
     ctx.fillStyle = '#93a4ba';
     ctx.font = '11px system-ui';
     ctx.textAlign = 'center';
     ticks.forEach(f => {
       if (f < fMin || f > fMax) return;
-      const x = xForFreq(f);
-      ctx.fillText(f >= 1000 ? `${f / 1000}k` : String(f), x, baseline + 18);
+      ctx.fillText(f >= 1000 ? `${f / 1000}k` : String(f), xForFreq(f), baseline + 18);
     });
   }
 
@@ -545,10 +686,6 @@
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     });
     ctx.stroke();
-    ctx.fillStyle = '#93a4ba';
-    ctx.font = '11px system-ui';
-    ctx.textAlign = 'left';
-    ctx.fillText('posledních 30 s', padL, c.height - 7);
   }
 
   function nearestCalibrationFrequency(freq) {
@@ -560,7 +697,7 @@
       alert('Nejdřív spusť měření.');
       return;
     }
-    const ref = Number(prompt('Kolik dB SPL ukazuje referenční hlukoměr právě teď?'));
+    const ref = Number(prompt('Kolik dB SPL ukazuje referenční hlukoměr?'));
     if (!Number.isFinite(ref)) return;
     const binHz = (audioCtx.sampleRate / 2) / freqData.length;
     const deltaWithoutOffset = spectralDeltaDb(weighting.value, binHz);
@@ -568,6 +705,7 @@
     offsetNum.value = offsetDB.toFixed(1);
     saveSettings();
     renderUnits();
+    resetCurrentMeasurement();
   }
 
   function calibrateCurrentFrequency() {
@@ -575,7 +713,7 @@
       alert('Nejdřív spusť měření a pusť čistý tón.');
       return;
     }
-    const ref = Number(prompt(`Detekováno přibližně ${Math.round(lastPeakHz)} Hz. Kolik dB${weightingLabel()} ukazuje referenční měřák?`));
+    const ref = Number(prompt(`${Math.round(lastPeakHz)} Hz – kolik ${unitLabel()} ukazuje referenční měřák?`));
     if (!Number.isFinite(ref)) return;
     const center = nearestCalibrationFrequency(lastPeakHz);
     const weightedBase = lastRawDbfs + offsetDB + weightDb(lastPeakHz, weighting.value);
@@ -583,7 +721,7 @@
     freqCalibration[center] = correction;
     saveSettings();
     renderCalibrationGrid();
-    alert(`Uložena korekce ${correction.toFixed(1)} dB pro pásmo ${formatFreq(center)}.`);
+    resetCurrentMeasurement();
   }
 
   function changeFftSize() {
@@ -593,6 +731,93 @@
       allocateBuffers();
     }
     updateResolutionNote();
+  }
+
+  function measurementSnapshot() {
+    if (!sessionStartedAt || !(sessionDurationMs > 0)) return null;
+    return {
+      id: sessionId,
+      startedAt: sessionStartedAt.toISOString(),
+      endedAt: (sessionEndedAt || new Date()).toISOString(),
+      durationSec: Number((sessionDurationMs / 1000).toFixed(2)),
+      weighting: weightingLabel(),
+      unit: unitLabel(),
+      average: Number(currentMeasurementAverage().toFixed(2)),
+      min: Number(minDB.toFixed(2)),
+      max: Number(maxDB.toFixed(2)),
+      offset: Number(offsetDB.toFixed(2)),
+      samples: sessionSamples.map(s => ({ t: s.t, db: s.db }))
+    };
+  }
+
+  function saveCurrentMeasurement() {
+    addFinalSample();
+    const snapshot = measurementSnapshot();
+    if (!snapshot) return;
+    const index = savedMeasurements.findIndex(m => m.id === snapshot.id);
+    if (index >= 0) savedMeasurements[index] = snapshot;
+    else savedMeasurements.unshift(snapshot);
+    persistMeasurements();
+    renderSavedMeasurements();
+    setStatus(running ? 'měřím · uloženo' : 'uloženo');
+    setTimeout(() => setStatus(running ? 'měřím' : 'zastaveno'), 1200);
+  }
+
+  function csvCell(value) {
+    const s = String(value ?? '');
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+
+  function numCs(value, digits = 2) {
+    return Number.isFinite(Number(value)) ? Number(value).toFixed(digits).replace('.', ',') : '';
+  }
+
+  function exportToExcel() {
+    let items = savedMeasurements;
+    if (!items.length) {
+      const current = measurementSnapshot();
+      if (current) items = [current];
+    }
+    if (!items.length) {
+      alert('Nejdřív ulož nebo proveď měření.');
+      return;
+    }
+
+    const rows = [[
+      'Měření','Datum','Začátek','Délka [s]','Vážení','Jednotka','Průměr [dB]','Minimum [dB]','Maximum [dB]','Čas od startu [s]','Hodnota [dB]'
+    ]];
+
+    items.slice().reverse().forEach((m, mi) => {
+      const d = new Date(m.startedAt);
+      const samples = Array.isArray(m.samples) && m.samples.length ? m.samples : [{t:'',db:''}];
+      samples.forEach(s => {
+        rows.push([
+          mi + 1,
+          d.toLocaleDateString('cs-CZ'),
+          d.toLocaleTimeString('cs-CZ'),
+          numCs(m.durationSec),
+          m.weighting || '',
+          m.unit || '',
+          numCs(m.average),
+          numCs(m.min),
+          numCs(m.max),
+          s.t === '' ? '' : numCs(s.t),
+          s.db === '' ? '' : numCs(s.db)
+        ]);
+      });
+    });
+
+    const csv = '\uFEFF' + rows.map(row => row.map(csvCell).join(';')).join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const now = new Date();
+    a.href = url;
+    a.download = `hlukomer-${now.toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   document.querySelectorAll('.tab').forEach(btn => {
@@ -606,17 +831,28 @@
 
   startBtn.addEventListener('click', start);
   stopBtn.addEventListener('click', stop);
-  resetBtn.addEventListener('click', resetStats);
-  showSPL.addEventListener('change', () => { saveSettings(); renderUnits(); resetStats(); });
+  resetBtn.addEventListener('click', resetCurrentMeasurement);
+  saveMeasurementBtn.addEventListener('click', saveCurrentMeasurement);
+  exportExcelBtn.addEventListener('click', exportToExcel);
+
+  showSPL.addEventListener('change', () => { saveSettings(); renderUnits(); resetCurrentMeasurement(); });
   holdPeak.addEventListener('change', saveSettings);
-  weighting.addEventListener('change', () => { saveSettings(); renderUnits(); resetStats(); });
+  weighting.addEventListener('change', () => { saveSettings(); renderUnits(); resetCurrentMeasurement(); });
+  displayResponse.addEventListener('change', () => {
+    saveSettings();
+    smoothedPower = NaN;
+    lastSmoothAt = 0;
+  });
+
   offsetNum.addEventListener('change', () => {
     const n = Number(offsetNum.value);
     if (!Number.isFinite(n)) return;
     offsetDB = Math.max(-40, Math.min(100, n));
     offsetNum.value = offsetDB.toFixed(1);
     saveSettings();
+    resetCurrentMeasurement();
   });
+
   calibrateBtn.addEventListener('click', calibrateSpl);
   freqCalBtn.addEventListener('click', calibrateCurrentFrequency);
   zeroCalBtn.addEventListener('click', () => {
@@ -624,14 +860,18 @@
     freqCalibration = Object.fromEntries(CAL_FREQS.map(f => [f, 0]));
     saveSettings();
     renderCalibrationGrid();
+    resetCurrentMeasurement();
   });
+
   fftSizeSelect.addEventListener('change', changeFftSize);
   spectrumMode.addEventListener('change', saveSettings);
   freqScale.addEventListener('change', saveSettings);
 
   renderCalibrationGrid();
   renderUnits();
+  renderSavedMeasurements();
   updateResolutionNote();
+  drawEmptyCharts();
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(console.error));
