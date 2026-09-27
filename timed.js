@@ -2,6 +2,10 @@
   'use strict';
 
   const $ = id => document.getElementById(id);
+  const TYPES = ['A', 'C', 'Z'];
+  const OCTAVES = [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+  const OCTAVE_FACTOR = Math.SQRT2;
+  const SAMPLE_MS = 80;
 
   const nativeStart = $('startBtn');
   const nativeStop = $('stopBtn');
@@ -14,6 +18,8 @@
   const unitOut = $('unitOut');
   const weighting = $('weighting');
   const showSPL = $('showSPL');
+  const holdPeak = $('holdPeak');
+  const offsetNum = $('offsetNum');
 
   const timedMode = $('timedMode');
   const timedOptions = $('timedOptions');
@@ -24,18 +30,15 @@
   const exportBtn = $('exportTimedBtn');
   const clearBtn = $('clearTimedBtn');
 
-  const OCTAVES = [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
-  const OCTAVE_FACTOR = Math.SQRT2;
-  const SAMPLE_MS = 80;
-
   const LS = {
     mode: 'hlukomer.timedMode.v1',
     seconds: 'hlukomer.timedSeconds.v1',
-    results: 'hlukomer.results.v3',
-    timedOld: 'hlukomer.timedResults.v2',
-    timedOlder: 'hlukomer.timedResults.v1',
-    manualOld: 'hlukomer.manualResults.v2',
-    nativeOld: 'hlukomer.measurements.v1'
+    results: 'hlukomer.results.v4',
+    resultsV3: 'hlukomer.results.v3',
+    timedV2: 'hlukomer.timedResults.v2',
+    timedV1: 'hlukomer.timedResults.v1',
+    manualV2: 'hlukomer.manualResults.v2',
+    nativeV1: 'hlukomer.measurements.v1'
   };
 
   let results = loadResults();
@@ -53,17 +56,17 @@
   let sessionStartedAt = null;
   let lastIntegrationPerf = 0;
   let integratedMs = 0;
-  let totalEnergy = 0;
-  let octaveEnergy = makeMap(0);
+  let totalEnergy = typeMap(0);
+  let octaveEnergyA = octaveMap(0);
+  let octaveEnergyZ = octaveMap(0);
   let recentSegments = [];
-  let minLeq1 = Infinity;
-  let maxLeq1 = -Infinity;
+  let minLeq1 = typeMap(Infinity);
+  let maxLeq1 = typeMap(-Infinity);
 
   let measurementWeighting = 'A';
   let measurementSpl = true;
   let measurementOffset = 40;
   let measurementCalibration = {};
-
   let targetSeconds = 5;
   let sampleTimer = 0;
 
@@ -73,28 +76,33 @@
   timedMode.checked = localStorage.getItem(LS.mode) === '1';
   timedSeconds.value = clampSeconds(Number(localStorage.getItem(LS.seconds)) || 5);
   targetSeconds = Number(timedSeconds.value);
-
+  persistResults();
   updatePresetState();
   updateTimedVisibility();
   renderResults();
   resetLeqDisplay();
 
-  function makeMap(value) {
+  function typeMap(value) {
+    return { A: value, C: value, Z: value };
+  }
+
+  function octaveMap(value) {
     return Object.fromEntries(OCTAVES.map(f => [f, value]));
   }
 
   function buildUi() {
     const style = document.createElement('style');
     style.textContent = `
-      #startBtn,#stopBtn,#resetBtn{display:none!important}
-      #saveMeasurementBtn{display:none!important}
+      #startBtn,#stopBtn,#resetBtn,#saveMeasurementBtn{display:none!important}
       .buttons{grid-template-columns:repeat(2,minmax(72px,1fr))!important}
       .transportBtn{min-width:76px;min-height:52px;font-size:24px;line-height:1;padding:8px 18px}
       .transportBtn.stop{font-size:21px}
       .leqCaption{font-size:12px;color:var(--muted);font-weight:750;margin-bottom:4px}
       .nativeMeasureValue{display:none!important}
       #timedSeriesDetails{display:block!important}
-      @media(max-width:560px){.buttons{grid-template-columns:1fr 1fr!important}.transportBtn{width:100%;min-height:50px}}
+      .resultRight{display:flex;align-items:center;gap:7px}
+      .resultDelete{min-width:38px;min-height:36px;padding:6px 9px;font-size:16px;background:#2a1820;border-color:#60303e}
+      @media(max-width:560px){.buttons{grid-template-columns:1fr 1fr!important}.transportBtn{width:100%;min-height:50px}.resultRight{gap:5px}}
     `;
     document.head.appendChild(style);
 
@@ -113,7 +121,6 @@
     stop.title = 'Ukončit měření';
     stop.setAttribute('aria-label', 'Ukončit měření');
     stop.disabled = true;
-
     buttons?.append(play, stop);
 
     const oldBig = $('dbOut');
@@ -139,8 +146,7 @@
       if (old) {
         old.classList.add('nativeMeasureValue');
         old.insertAdjacentElement('afterend', fresh);
-        const stat = old.closest('.stat');
-        const k = stat?.querySelector('.k');
+        const k = old.closest('.stat')?.querySelector('.k');
         if (k) k.textContent = label;
       }
       return fresh;
@@ -160,6 +166,7 @@
       oldBar.insertAdjacentElement('afterend', bar);
     }
 
+    if (holdPeak?.closest('label')) holdPeak.closest('label').style.display = 'none';
     if (nativeSavedDetails) nativeSavedDetails.style.display = 'none';
     if (resultsDetails) {
       resultsDetails.style.display = '';
@@ -176,20 +183,18 @@
   function patchAnalyserCapture() {
     const ctors = [window.AudioContext, window.webkitAudioContext].filter(Boolean);
     const done = new Set();
-
     ctors.forEach(Ctor => {
       if (!Ctor?.prototype || done.has(Ctor.prototype)) return;
       done.add(Ctor.prototype);
       const proto = Ctor.prototype;
       const originalCreateAnalyser = proto.createAnalyser;
-      if (!originalCreateAnalyser || originalCreateAnalyser.__hlukomerLeqWrapped) return;
+      if (!originalCreateAnalyser || originalCreateAnalyser.__hlukomerUnifiedWrapped) return;
 
       function wrappedCreateAnalyser(...args) {
         const context = this;
         const node = originalCreateAnalyser.apply(context, args);
-        if (node.__hlukomerLeqCapture) return node;
-        node.__hlukomerLeqCapture = true;
-
+        if (node.__hlukomerUnifiedCapture) return node;
+        node.__hlukomerUnifiedCapture = true;
         const originalTime = node.getFloatTimeDomainData.bind(node);
         const originalFreq = node.getFloatFrequencyData.bind(node);
 
@@ -197,7 +202,6 @@
           originalTime(array);
           if (captureEnabled) capturedTime = new Float32Array(array);
         };
-
         node.getFloatFrequencyData = array => {
           originalFreq(array);
           if (captureEnabled) {
@@ -209,7 +213,7 @@
         return node;
       }
 
-      wrappedCreateAnalyser.__hlukomerLeqWrapped = true;
+      wrappedCreateAnalyser.__hlukomerUnifiedWrapped = true;
       proto.createAnalyser = wrappedCreateAnalyser;
     });
   }
@@ -219,15 +223,65 @@
     return Math.max(1, Math.min(3600, Math.round(v)));
   }
 
+  function finiteOrNull(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function objectOrEmpty(v) {
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  }
+
+  function normalizeResult(item) {
+    const legacyLeq = finiteOrNull(item.leq ?? item.average);
+    const legacyWeight = String(item.weighting || '').toUpperCase();
+    let leqA = finiteOrNull(item.leqA);
+    let leqC = finiteOrNull(item.leqC);
+    let leqZ = finiteOrNull(item.leqZ);
+    if (legacyLeq !== null) {
+      if (legacyWeight === 'A' && leqA === null) leqA = legacyLeq;
+      if (legacyWeight === 'C' && leqC === null) leqC = legacyLeq;
+      if (legacyWeight === 'Z' && leqZ === null) leqZ = legacyLeq;
+    }
+
+    let octavesA = objectOrEmpty(item.octavesA);
+    let octavesZ = objectOrEmpty(item.octavesZ);
+    const legacyOctaves = objectOrEmpty(item.octaves);
+    if (!Object.keys(octavesA).length && legacyWeight === 'A') octavesA = legacyOctaves;
+    if (!Object.keys(octavesZ).length && legacyWeight === 'Z') octavesZ = legacyOctaves;
+
+    return {
+      id: item.id || `${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
+      name: item.name || 'Měření',
+      startedAt: item.startedAt || new Date().toISOString(),
+      durationSec: Number(item.durationSec) || 0,
+      timed: Boolean(item.timed ?? item.targetSec != null),
+      targetSec: finiteOrNull(item.targetSec),
+      completedTarget: Boolean(item.completedTarget),
+      spl: item.spl !== undefined ? Boolean(item.spl) : !String(item.unit || '').includes('dBFS'),
+      leqA,
+      leqC,
+      leqZ,
+      minA: finiteOrNull(item.minA ?? (legacyWeight === 'A' ? item.min : null)),
+      maxA: finiteOrNull(item.maxA ?? (legacyWeight === 'A' ? item.max : null)),
+      minC: finiteOrNull(item.minC ?? (legacyWeight === 'C' ? item.min : null)),
+      maxC: finiteOrNull(item.maxC ?? (legacyWeight === 'C' ? item.max : null)),
+      minZ: finiteOrNull(item.minZ ?? (legacyWeight === 'Z' ? item.min : null)),
+      maxZ: finiteOrNull(item.maxZ ?? (legacyWeight === 'Z' ? item.max : null)),
+      octavesA,
+      octavesZ
+    };
+  }
+
   function loadResults() {
     const merged = [];
     const ids = new Set();
     const add = item => {
       if (!item || typeof item !== 'object') return;
-      const id = item.id || `${item.startedAt || ''}-${item.name || ''}-${merged.length}`;
-      if (ids.has(id)) return;
-      ids.add(id);
-      merged.push(normalizeResult({ ...item, id }));
+      const normalized = normalizeResult(item);
+      if (ids.has(normalized.id)) return;
+      ids.add(normalized.id);
+      merged.push(normalized);
     };
 
     try {
@@ -235,7 +289,7 @@
       if (Array.isArray(current) && current.length) return current.map(normalizeResult);
     } catch (_) {}
 
-    [LS.timedOld, LS.timedOlder, LS.manualOld].forEach(key => {
+    [LS.resultsV3, LS.timedV2, LS.timedV1, LS.manualV2].forEach(key => {
       try {
         const arr = JSON.parse(localStorage.getItem(key) || '[]');
         if (Array.isArray(arr)) arr.forEach(add);
@@ -243,36 +297,16 @@
     });
 
     try {
-      const old = JSON.parse(localStorage.getItem(LS.nativeOld) || '[]');
+      const old = JSON.parse(localStorage.getItem(LS.nativeV1) || '[]');
       if (Array.isArray(old)) old.forEach((m, i) => add({
         ...m,
         name: m.name || `Měření ${i + 1}`,
-        leq: Number.isFinite(Number(m.average)) ? Number(m.average) : m.leq,
-        octaves: m.octaves || {}
+        leq: finiteOrNull(m.average),
+        weighting: m.weighting || ''
       }));
     } catch (_) {}
 
     return merged;
-  }
-
-  function normalizeResult(item) {
-    return {
-      id: item.id || `${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
-      name: item.name || 'Měření',
-      startedAt: item.startedAt || new Date().toISOString(),
-      durationSec: Number(item.durationSec) || 0,
-      weighting: item.weighting || '',
-      unit: item.unit || 'dB',
-      leq: finiteOrNull(item.leq ?? item.average),
-      min: finiteOrNull(item.min),
-      max: finiteOrNull(item.max),
-      octaves: item.octaves || {}
-    };
-  }
-
-  function finiteOrNull(v) {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
   }
 
   function persistResults() {
@@ -294,7 +328,7 @@
         return [f, Number.isFinite(n) ? n : 0];
       }));
     } catch (_) {
-      return makeMap(0);
+      return octaveMap(0);
     }
   }
 
@@ -336,12 +370,13 @@
     for (let i = 0; i < capturedTime.length; i++) sumSquares += capturedTime[i] * capturedTime[i];
     const rms = Math.sqrt(sumSquares / capturedTime.length);
     const rawDbfs = 20 * Math.log10(Math.max(rms, 1e-9));
-
     const binHz = capturedSampleRate / capturedFftSize;
     const maxHz = Math.min(20000, capturedSampleRate / 2);
+
     let rawPower = 0;
-    let adjustedPower = 0;
-    const bands = makeMap(0);
+    const adjusted = typeMap(0);
+    const bandsA = octaveMap(0);
+    const bandsZ = octaveMap(0);
 
     for (let i = 1; i < capturedFreq.length; i++) {
       const freq = i * binHz;
@@ -351,35 +386,47 @@
 
       const p = Math.pow(10, db / 10);
       rawPower += p;
-      const correction = calibrationDb(freq) + weightDb(freq, measurementWeighting);
-      const adjusted = p * Math.pow(10, correction / 10);
-      adjustedPower += adjusted;
+      const cal = calibrationDb(freq);
+      const pA = p * Math.pow(10, (cal + weightDb(freq, 'A')) / 10);
+      const pC = p * Math.pow(10, (cal + weightDb(freq, 'C')) / 10);
+      const pZ = p * Math.pow(10, cal / 10);
+      adjusted.A += pA;
+      adjusted.C += pC;
+      adjusted.Z += pZ;
 
       for (const center of OCTAVES) {
         if (freq >= center / OCTAVE_FACTOR && freq < center * OCTAVE_FACTOR) {
-          bands[center] += adjusted;
+          bandsA[center] += pA;
+          bandsZ[center] += pZ;
           break;
         }
       }
     }
 
-    if (!(rawPower > 0) || !(adjustedPower > 0)) return null;
+    if (!(rawPower > 0) || TYPES.some(type => !(adjusted[type] > 0))) return null;
 
-    const delta = 10 * Math.log10(adjustedPower / rawPower);
-    const totalDb = rawDbfs + delta + (measurementSpl ? measurementOffset : 0);
-    const totalPower = Math.pow(10, totalDb / 10);
-    const octavePowers = {};
+    const db = {};
+    const powers = {};
+    TYPES.forEach(type => {
+      const delta = 10 * Math.log10(adjusted[type] / rawPower);
+      db[type] = rawDbfs + delta + (measurementSpl ? measurementOffset : 0);
+      powers[type] = Math.pow(10, db[type] / 10);
+    });
 
+    const octavePowersA = octaveMap(0);
+    const octavePowersZ = octaveMap(0);
     OCTAVES.forEach(center => {
-      const bp = bands[center];
-      if (!(bp > 0)) octavePowers[center] = 0;
-      else {
-        const bandDb = totalDb + 10 * Math.log10(bp / adjustedPower);
-        octavePowers[center] = Math.pow(10, bandDb / 10);
+      if (bandsA[center] > 0) {
+        const bandDbA = db.A + 10 * Math.log10(bandsA[center] / adjusted.A);
+        octavePowersA[center] = Math.pow(10, bandDbA / 10);
+      }
+      if (bandsZ[center] > 0) {
+        const bandDbZ = db.Z + 10 * Math.log10(bandsZ[center] / adjusted.Z);
+        octavePowersZ[center] = Math.pow(10, bandDbZ / 10);
       }
     });
 
-    return { totalPower, octavePowers };
+    return { powers, octavePowersA, octavePowersZ };
   }
 
   function beginSession() {
@@ -388,11 +435,12 @@
     finishing = false;
     sessionStartedAt = new Date();
     integratedMs = 0;
-    totalEnergy = 0;
-    octaveEnergy = makeMap(0);
+    totalEnergy = typeMap(0);
+    octaveEnergyA = octaveMap(0);
+    octaveEnergyZ = octaveMap(0);
     recentSegments = [];
-    minLeq1 = Infinity;
-    maxLeq1 = -Infinity;
+    minLeq1 = typeMap(Infinity);
+    maxLeq1 = typeMap(-Infinity);
     capturedTime = null;
     capturedFreq = null;
     capturedSampleRate = 0;
@@ -403,20 +451,40 @@
     measurementSpl = !!showSPL?.checked;
     measurementOffset = loadNumber('hlukomer.offsetDB.v2', loadNumber('noiseMeterOffsetDB', 40));
     measurementCalibration = loadCalibration();
-
     targetSeconds = clampSeconds(Number(timedSeconds.value));
+
     captureEnabled = true;
     lockMeasurementSettings(true);
     setTransportState('running');
     resetLeqDisplay();
-
     clearInterval(sampleTimer);
     sampleTimer = setInterval(sampleMeasurement, SAMPLE_MS);
   }
 
+  function integrateSnapshot(snapshot, dt) {
+    TYPES.forEach(type => { totalEnergy[type] += snapshot.powers[type] * dt; });
+    OCTAVES.forEach(center => {
+      octaveEnergyA[center] += (snapshot.octavePowersA[center] || 0) * dt;
+      octaveEnergyZ[center] += (snapshot.octavePowersZ[center] || 0) * dt;
+    });
+    integratedMs += dt;
+    recentSegments.push({ end: integratedMs, dt, powers: snapshot.powers });
+    const keepAfter = integratedMs - 5200;
+    while (recentSegments.length && recentSegments[0].end < keepAfter) recentSegments.shift();
+
+    if (integratedMs >= 900) {
+      TYPES.forEach(type => {
+        const v = recentLeq(1000, type);
+        if (Number.isFinite(v)) {
+          minLeq1[type] = Math.min(minLeq1[type], v);
+          maxLeq1[type] = Math.max(maxLeq1[type], v);
+        }
+      });
+    }
+  }
+
   function sampleMeasurement() {
     if (!sessionActive || paused || finishing) return;
-
     const now = performance.now();
     let dt = now - lastIntegrationPerf;
     lastIntegrationPerf = now;
@@ -434,63 +502,45 @@
 
     const snapshot = currentSnapshot();
     if (!snapshot) return;
-
-    totalEnergy += snapshot.totalPower * dt;
-    OCTAVES.forEach(center => {
-      octaveEnergy[center] += (snapshot.octavePowers[center] || 0) * dt;
-    });
-    integratedMs += dt;
-
-    recentSegments.push({ end: integratedMs, dt, power: snapshot.totalPower });
-    const keepAfter = integratedMs - 5200;
-    while (recentSegments.length && recentSegments[0].end < keepAfter) recentSegments.shift();
-
-    const leq1 = recentLeq(1000);
-    const leq5 = recentLeq(5000);
-    const total = totalLeq();
-
-    if (integratedMs >= 900 && Number.isFinite(leq1)) {
-      minLeq1 = Math.min(minLeq1, leq1);
-      maxLeq1 = Math.max(maxLeq1, leq1);
-    }
-
-    renderLeq(leq1, leq5, total);
+    integrateSnapshot(snapshot, dt);
+    renderLeq();
     updateCountdown();
 
-    if (timedMode.checked && integratedMs >= targetSeconds * 1000 - 0.5) {
-      finishMeasurement(true);
-    }
+    if (timedMode.checked && integratedMs >= targetSeconds * 1000 - 0.5) finishMeasurement(true);
   }
 
-  function recentLeq(windowMs) {
+  function recentLeq(windowMs, type) {
     if (!recentSegments.length) return NaN;
     const start = Math.max(0, integratedMs - windowMs);
     let energy = 0;
     let duration = 0;
-
     for (const seg of recentSegments) {
       const segStart = seg.end - seg.dt;
       const overlap = Math.max(0, Math.min(seg.end, integratedMs) - Math.max(segStart, start));
       if (overlap > 0) {
-        energy += seg.power * overlap;
+        energy += seg.powers[type] * overlap;
         duration += overlap;
       }
     }
     return duration > 0 && energy > 0 ? 10 * Math.log10(energy / duration) : NaN;
   }
 
-  function totalLeq() {
-    return integratedMs > 0 && totalEnergy > 0 ? 10 * Math.log10(totalEnergy / integratedMs) : NaN;
+  function totalLeq(type) {
+    return integratedMs > 0 && totalEnergy[type] > 0 ? 10 * Math.log10(totalEnergy[type] / integratedMs) : NaN;
   }
 
-  function renderLeq(leq1, leq5, total) {
+  function renderLeq() {
+    const type = measurementWeighting;
+    const leq1 = recentLeq(1000, type);
+    const leq5 = recentLeq(5000, type);
+    const total = totalLeq(type);
     const fmt = v => Number.isFinite(v) ? v.toFixed(1) : '--';
     ui.big.textContent = fmt(leq1);
     ui.leq1.textContent = fmt(leq1);
     ui.leq5.textContent = fmt(leq5);
     ui.total.textContent = fmt(total);
-    ui.min.textContent = Number.isFinite(minLeq1) ? minLeq1.toFixed(1) : '--';
-    ui.max.textContent = Number.isFinite(maxLeq1) ? maxLeq1.toFixed(1) : '--';
+    ui.min.textContent = Number.isFinite(minLeq1[type]) ? minLeq1[type].toFixed(1) : '--';
+    ui.max.textContent = Number.isFinite(maxLeq1[type]) ? maxLeq1[type].toFixed(1) : '--';
     ui.bar.style.width = `${meterPercent(leq1).toFixed(1)}%`;
   }
 
@@ -526,6 +576,17 @@
     statusPill.textContent = 'měřím';
   }
 
+  function sampleMeasurementFinal() {
+    const now = performance.now();
+    let dt = Math.min(Math.max(0, now - lastIntegrationPerf), 250);
+    if (timedMode.checked) dt = Math.min(dt, Math.max(0, targetSeconds * 1000 - integratedMs));
+    if (!(dt > 0)) return;
+    const snapshot = currentSnapshot();
+    if (!snapshot) return;
+    integrateSnapshot(snapshot, dt);
+    renderLeq();
+  }
+
   function finishMeasurement(autoFinished) {
     if (!sessionActive || finishing) return;
     if (!paused) sampleMeasurementFinal();
@@ -534,7 +595,6 @@
     captureEnabled = false;
     clearInterval(sampleTimer);
     sampleTimer = 0;
-
     if (!nativeStop.disabled) nativeStop.click();
 
     const item = makeResult(autoFinished);
@@ -561,36 +621,16 @@
     }, 80);
   }
 
-  function sampleMeasurementFinal() {
-    const now = performance.now();
-    let dt = Math.min(Math.max(0, now - lastIntegrationPerf), 250);
-    if (timedMode.checked) dt = Math.min(dt, Math.max(0, targetSeconds * 1000 - integratedMs));
-    if (!(dt > 0)) return;
-    const snapshot = currentSnapshot();
-    if (!snapshot) return;
-
-    totalEnergy += snapshot.totalPower * dt;
-    OCTAVES.forEach(center => octaveEnergy[center] += (snapshot.octavePowers[center] || 0) * dt);
-    integratedMs += dt;
-    recentSegments.push({ end: integratedMs, dt, power: snapshot.totalPower });
-
-    const leq1 = recentLeq(1000);
-    if (integratedMs >= 900 && Number.isFinite(leq1)) {
-      minLeq1 = Math.min(minLeq1, leq1);
-      maxLeq1 = Math.max(maxLeq1, leq1);
-    }
-    renderLeq(leq1, recentLeq(5000), totalLeq());
-  }
-
   function makeResult(autoFinished) {
-    if (!(integratedMs > 0) || !(totalEnergy > 0)) return null;
-    const octaves = {};
+    if (!(integratedMs > 0) || !(totalEnergy.A > 0)) return null;
+    const octavesA = {};
+    const octavesZ = {};
     OCTAVES.forEach(center => {
-      const e = octaveEnergy[center];
-      octaves[center] = e > 0 ? Number((10 * Math.log10(e / integratedMs)).toFixed(2)) : null;
+      octavesA[center] = octaveEnergyA[center] > 0 ? Number((10 * Math.log10(octaveEnergyA[center] / integratedMs)).toFixed(2)) : null;
+      octavesZ[center] = octaveEnergyZ[center] > 0 ? Number((10 * Math.log10(octaveEnergyZ[center] / integratedMs)).toFixed(2)) : null;
     });
 
-    return {
+    return normalizeResult({
       id: `${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
       name: '',
       startedAt: sessionStartedAt ? sessionStartedAt.toISOString() : new Date().toISOString(),
@@ -598,13 +638,19 @@
       timed: !!timedMode.checked,
       targetSec: timedMode.checked ? targetSeconds : null,
       completedTarget: !!(autoFinished && timedMode.checked),
-      weighting: measurementWeighting,
-      unit: unitOut.textContent || (measurementSpl ? `dB${measurementWeighting}` : `dBFS (${measurementWeighting})`),
-      leq: Number(totalLeq().toFixed(2)),
-      min: Number.isFinite(minLeq1) ? Number(minLeq1.toFixed(2)) : null,
-      max: Number.isFinite(maxLeq1) ? Number(maxLeq1.toFixed(2)) : null,
-      octaves
-    };
+      spl: measurementSpl,
+      leqA: Number(totalLeq('A').toFixed(2)),
+      leqC: Number(totalLeq('C').toFixed(2)),
+      leqZ: Number(totalLeq('Z').toFixed(2)),
+      minA: Number.isFinite(minLeq1.A) ? Number(minLeq1.A.toFixed(2)) : null,
+      maxA: Number.isFinite(maxLeq1.A) ? Number(maxLeq1.A.toFixed(2)) : null,
+      minC: Number.isFinite(minLeq1.C) ? Number(minLeq1.C.toFixed(2)) : null,
+      maxC: Number.isFinite(maxLeq1.C) ? Number(maxLeq1.C.toFixed(2)) : null,
+      minZ: Number.isFinite(minLeq1.Z) ? Number(minLeq1.Z.toFixed(2)) : null,
+      maxZ: Number.isFinite(maxLeq1.Z) ? Number(maxLeq1.Z.toFixed(2)) : null,
+      octavesA,
+      octavesZ
+    });
   }
 
   function setTransportState(state) {
@@ -639,6 +685,7 @@
     document.querySelectorAll('.preset').forEach(btn => btn.disabled = locked);
     if (weighting) weighting.disabled = locked;
     if (showSPL) showSPL.disabled = locked;
+    if (offsetNum) offsetNum.disabled = locked;
   }
 
   function updateCountdown() {
@@ -660,6 +707,13 @@
     document.querySelectorAll('.preset').forEach(btn => {
       btn.classList.toggle('active', Number(btn.dataset.sec) === Number(timedSeconds.value));
     });
+  }
+
+  function primaryValue(item) {
+    if (item.leqA !== null) return { value: item.leqA, unit: item.spl ? 'dBA' : 'dBFS A' };
+    if (item.leqC !== null) return { value: item.leqC, unit: item.spl ? 'dBC' : 'dBFS C' };
+    if (item.leqZ !== null) return { value: item.leqZ, unit: item.spl ? 'dBZ' : 'dBFS Z' };
+    return { value: null, unit: 'dB' };
   }
 
   function renderResults() {
@@ -694,13 +748,31 @@
       const meta = document.createElement('div');
       meta.className = 'timedMeta';
       const d = new Date(item.startedAt);
-      meta.textContent = `${Number(item.durationSec).toFixed(1)} s · ${d.toLocaleTimeString('cs-CZ', {hour:'2-digit',minute:'2-digit',second:'2-digit'})}`;
+      meta.textContent = `${Number(item.durationSec).toFixed(1)} s · ${item.timed ? 'časované' : 'ruční'} · ${d.toLocaleTimeString('cs-CZ', {hour:'2-digit',minute:'2-digit',second:'2-digit'})}`;
       left.append(name, meta);
 
+      const right = document.createElement('div');
+      right.className = 'resultRight';
       const value = document.createElement('div');
       value.className = 'timedValue';
-      value.textContent = `${Number(item.leq).toFixed(1)} ${item.unit || 'dB'}`;
-      row.append(left, value);
+      const primary = primaryValue(item);
+      value.textContent = primary.value === null ? '--' : `${primary.value.toFixed(1)} ${primary.unit}`;
+
+      const del = document.createElement('button');
+      del.className = 'resultDelete';
+      del.textContent = '🗑';
+      del.title = 'Smazat měření';
+      del.setAttribute('aria-label', `Smazat ${item.name || `měření ${index + 1}`}`);
+      del.addEventListener('click', () => {
+        const label = item.name || `Měření ${index + 1}`;
+        if (!confirm(`Smazat měření „${label}“?`)) return;
+        results = results.filter(r => r.id !== item.id);
+        persistResults();
+        renderResults();
+      });
+
+      right.append(value, del);
+      row.append(left, right);
       resultsList.appendChild(row);
     });
   }
@@ -713,8 +785,9 @@
     return Number.isFinite(Number(v)) ? Number(v).toFixed(digits).replace('.', ',') : '';
   }
 
-  function octaveHeader(center) {
-    return center >= 1000 ? `${String(center / 1000).replace('.', ',')} kHz [dB]` : `${String(center).replace('.', ',')} Hz [dB]`;
+  function octaveHeader(center, weight) {
+    const f = center >= 1000 ? `${String(center / 1000).replace('.', ',')} kHz` : `${String(center).replace('.', ',')} Hz`;
+    return `${f} ${weight} [dB]`;
   }
 
   function exportResults() {
@@ -724,8 +797,11 @@
     }
 
     const rows = [[
-      'Název','Datum','Čas','Délka [s]','Režim','Vážení','Jednotka','Leq [dB]','Minimum Leq 1 s [dB]','Maximum Leq 1 s [dB]',
-      ...OCTAVES.map(octaveHeader)
+      'Název','Datum','Čas','Délka [s]','Režim','Hladina',
+      'Leq A [dB]','Leq C [dB]','Leq Z [dB]',
+      'Minimum Leq 1 s A [dB]','Maximum Leq 1 s A [dB]',
+      ...OCTAVES.map(f => octaveHeader(f, 'A')),
+      ...OCTAVES.map(f => octaveHeader(f, 'Z'))
     ]];
 
     results.forEach(item => {
@@ -736,12 +812,14 @@
         d.toLocaleTimeString('cs-CZ'),
         numCs(item.durationSec),
         item.timed ? 'časované' : 'ruční',
-        item.weighting || '',
-        item.unit || '',
-        numCs(item.leq),
-        numCs(item.min),
-        numCs(item.max),
-        ...OCTAVES.map(center => numCs(item.octaves?.[center]))
+        item.spl ? 'SPL' : 'dBFS',
+        numCs(item.leqA),
+        numCs(item.leqC),
+        numCs(item.leqZ),
+        numCs(item.minA),
+        numCs(item.maxA),
+        ...OCTAVES.map(center => numCs(item.octavesA?.[center])),
+        ...OCTAVES.map(center => numCs(item.octavesZ?.[center]))
       ]);
     });
 
@@ -819,8 +897,7 @@
 
   if (nativeSave) nativeSave.disabled = true;
   if (nativeExport) nativeExport.disabled = true;
+  if (nativeReset) nativeReset.disabled = true;
 
-  window.addEventListener('beforeunload', () => {
-    clearInterval(sampleTimer);
-  });
+  window.addEventListener('beforeunload', () => clearInterval(sampleTimer));
 })();
