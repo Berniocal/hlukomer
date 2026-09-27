@@ -567,10 +567,11 @@
       alert('Nejdřív spusť měření a pusť čistý tón.');
       return;
     }
-    const ref = Number(prompt(`Detekováno přibližně ${Math.round(lastPeakHz)} Hz. Kolik dB SPL má referenční tón?`));
+    const ref = Number(prompt(`Detekováno přibližně ${Math.round(lastPeakHz)} Hz. Kolik dB${weightingLabel()} ukazuje referenční měřák?`));
     if (!Number.isFinite(ref)) return;
     const center = nearestCalibrationFrequency(lastPeakHz);
-    const correction = Math.max(-30, Math.min(30, ref - (lastRawDbfs + offsetDB)));
+    const weightedBase = lastRawDbfs + offsetDB + weightDb(lastPeakHz, weighting.value);
+    const correction = Math.max(-30, Math.min(30, ref - weightedBase));
     freqCalibration[center] = correction;
     saveSettings();
     renderCalibrationGrid();
