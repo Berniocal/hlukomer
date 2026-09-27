@@ -91,7 +91,14 @@
   const CAL_FREQS = [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
   const THIRD_OCT = [25,31.5,40,50,63,80,100,125,160,200,250,315,400,500,630,800,1000,1250,1600,2000,2500,3150,4000,5000,6300,8000,10000,12500,16000,20000];
 
-  let offsetDB = loadNumber(LS.offset, 40);
+  function loadNumber(key, fallback) {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  let offsetDB = loadNumber(LS.offset, loadNumber('noiseMeterOffsetDB', 40));
   let freqCalibration = loadCalibration();
   let audioCtx = null;
   let stream = null;
@@ -109,11 +116,6 @@
   const history = [];
   const historyTimes = [];
   const HISTORY_MS = 30000;
-
-  function loadNumber(key, fallback) {
-    const n = Number(localStorage.getItem(key));
-    return Number.isFinite(n) ? n : fallback;
-  }
 
   function loadCalibration() {
     try {
@@ -140,9 +142,15 @@
     localStorage.setItem(LS.freqCal, JSON.stringify(freqCalibration));
   }
 
-  showSPL.checked = (localStorage.getItem(LS.spl) ?? '1') === '1';
-  holdPeak.checked = (localStorage.getItem(LS.hold) ?? '0') === '1';
-  weighting.value = localStorage.getItem(LS.weighting) || 'A';
+  showSPL.checked = (localStorage.getItem(LS.spl) ?? localStorage.getItem('noiseMeterShowSPL') ?? '1') === '1';
+  holdPeak.checked = (localStorage.getItem(LS.hold) ?? localStorage.getItem('noiseMeterHoldPeak') ?? '0') === '1';
+  const savedWeighting = localStorage.getItem(LS.weighting);
+  if (savedWeighting) {
+    weighting.value = savedWeighting;
+  } else {
+    const oldA = localStorage.getItem('noiseMeterAWeight');
+    weighting.value = oldA === null ? 'A' : (oldA === '1' ? 'A' : 'Z');
+  }
   fftSizeSelect.value = localStorage.getItem(LS.fft) || '4096';
   spectrumMode.value = localStorage.getItem(LS.mode) || 'line';
   freqScale.value = localStorage.getItem(LS.scale) || 'log';
