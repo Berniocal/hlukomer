@@ -26,6 +26,25 @@ window.HLUKOMER_CALIBRATION_PROFILES = [
   }
 ];
 
+/* Ruční SPL kalibrace: bez horního limitu.
+   app.js historicky ořezává ručně zadaný offset na 100 dB. Tento hook se
+   načítá před app.js, odstraní HTML maximum a u hodnot nad 100 dB zabrání
+   starému ořezu; sjednocená Leq vrstva pak použije hodnotu z localStorage. */
+(() => {
+  const offsetInput = document.getElementById('offsetNum');
+  if (!offsetInput) return;
+
+  offsetInput.removeAttribute('max');
+  offsetInput.addEventListener('change', event => {
+    const value = Number(offsetInput.value);
+    if (!Number.isFinite(value) || value <= 100) return;
+
+    event.stopImmediatePropagation();
+    localStorage.setItem('hlukomer.offsetDB.v2', String(value));
+    offsetInput.value = value.toFixed(1);
+  });
+})();
+
 /* Stav rozbalovacích sekcí.
    Po načtení jsou všechny sekce v panelu Analýza zavřené.
    Uložená měření se sama otevřou pouze při přidání nového měření. */
