@@ -1,5 +1,4 @@
-/* Připravené profily pro budoucí kalibraci podle referenčního zdroje.
-   Funkční kalibrace se doplní až po změření referenčních hodnot konkrétní sestavy. */
+/* Připravené profily pro budoucí kalibraci podle referenčního zdroje. */
 window.HLUKOMER_CALIBRATION_PROFILES = [
   {
     id: 'tg113a',
@@ -19,8 +18,6 @@ window.HLUKOMER_CALIBRATION_PROFILES = [
       pinkMp3: 'calibration/ruzovy_sum_2min.mp3',
       whiteMp3: 'calibration/bily_sum_2min.mp3'
     },
-    // Výrobce uvádí rozsah 120 Hz–18 kHz; 31,5 a 63 Hz proto zatím
-    // nepovažujeme za spolehlivou část referenční kalibrace tohoto profilu.
     recommendedOctavesHz: [125, 250, 500, 1000, 2000, 4000, 8000, 16000],
     reference: null
   }
@@ -30,18 +27,14 @@ const HLUKOMER_CAL_FREQS = [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 160
 const HLUKOMER_CAL_PROFILE_NAME_KEY = 'hlukomer.calibrationProfileName.v1';
 const HLUKOMER_CAL_REFERENCE_KEY = 'hlukomer.calibrationReferenceSource.v1';
 
-/* Ruční SPL kalibrace: bez horního limitu.
-   Tento skript se načítá před app.js, takže u hodnot nad 100 dB zastaví
-   původní handler dřív, než by hodnotu ořízl. */
+/* Ruční SPL kalibrace bez horního limitu 100 dB. */
 (() => {
   const offsetInput = document.getElementById('offsetNum');
   if (!offsetInput) return;
-
   offsetInput.removeAttribute('max');
   offsetInput.addEventListener('change', event => {
     const value = Number(offsetInput.value);
     if (!Number.isFinite(value) || value <= 100) return;
-
     event.stopImmediatePropagation();
     localStorage.setItem('hlukomer.offsetDB.v2', String(value));
     offsetInput.value = value.toFixed(1);
@@ -50,12 +43,8 @@ const HLUKOMER_CAL_REFERENCE_KEY = 'hlukomer.calibrationReferenceSource.v1';
 
 function hlukomerReadFrequencyCalibration() {
   let raw = {};
-  try {
-    raw = JSON.parse(localStorage.getItem('hlukomer.freqCalibration.v2') || '{}');
-  } catch (_) {
-    raw = {};
-  }
-
+  try { raw = JSON.parse(localStorage.getItem('hlukomer.freqCalibration.v2') || '{}'); }
+  catch (_) { raw = {}; }
   return Object.fromEntries(HLUKOMER_CAL_FREQS.map(freq => {
     const value = Number(raw[freq]);
     return [String(freq), Number.isFinite(value) ? value : 0];
@@ -63,26 +52,24 @@ function hlukomerReadFrequencyCalibration() {
 }
 
 function hlukomerCurrentReferenceSource() {
-  const select = document.querySelector('#referenceCalibrationPreview select');
-  if (select?.value) {
-    const profile = (window.HLUKOMER_CALIBRATION_PROFILES || []).find(p => p.id === select.value);
-    if (profile) {
-      return {
-        id: profile.id,
-        name: profile.name,
-        productCode: profile.productCode || null,
-        distanceM: profile.distanceM ?? null,
-        primaryNoise: profile.primaryNoise || null
-      };
-    }
+  const select = document.getElementById('referenceSpeakerPreview');
+  const profiles = window.HLUKOMER_CALIBRATION_PROFILES || [];
+  let profile = null;
+  if (select?.dataset.profileId) profile = profiles.find(p => p.id === select.dataset.profileId);
+  if (!profile && profiles.length) profile = profiles[0];
+  if (profile) {
+    return {
+      id: profile.id,
+      name: profile.name,
+      productCode: profile.productCode || null,
+      distanceM: profile.distanceM ?? null,
+      primaryNoise: profile.primaryNoise || null
+    };
   }
-
   try {
     const stored = JSON.parse(localStorage.getItem(HLUKOMER_CAL_REFERENCE_KEY) || 'null');
     return stored && typeof stored === 'object' ? stored : null;
-  } catch (_) {
-    return null;
-  }
+  } catch (_) { return null; }
 }
 
 function hlukomerDownloadCalibration(profileName) {
@@ -96,7 +83,6 @@ function hlukomerDownloadCalibration(profileName) {
     frequencyCalibrationDb: hlukomerReadFrequencyCalibration(),
     referenceSource: hlukomerCurrentReferenceSource()
   };
-
   const json = JSON.stringify(data, null, 2);
   const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -117,21 +103,15 @@ function hlukomerDownloadCalibration(profileName) {
 function hlukomerNormalizeImportedCalibration(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Soubor neobsahuje platnou kalibraci.');
   if (data.format && data.format !== 'bernio-hlukomer-calibration') throw new Error('Tento JSON není kalibrační profil hlukoměru Bernio.');
-
   const offset = Number(data.splOffsetDb);
   if (!Number.isFinite(offset)) throw new Error('V souboru chybí platná SPL kalibrace.');
-
   const sourceFreq = data.frequencyCalibrationDb;
-  if (!sourceFreq || typeof sourceFreq !== 'object' || Array.isArray(sourceFreq)) {
-    throw new Error('V souboru chybí frekvenční kalibrace.');
-  }
-
+  if (!sourceFreq || typeof sourceFreq !== 'object' || Array.isArray(sourceFreq)) throw new Error('V souboru chybí frekvenční kalibrace.');
   const frequencyCalibrationDb = {};
   HLUKOMER_CAL_FREQS.forEach(freq => {
     const value = Number(sourceFreq[freq]);
     frequencyCalibrationDb[freq] = Number.isFinite(value) ? value : 0;
   });
-
   return {
     name: typeof data.name === 'string' && data.name.trim() ? data.name.trim() : 'Načtená kalibrace',
     splOffsetDb: offset,
@@ -148,13 +128,11 @@ function hlukomerImportCalibrationFile(file, nameInput) {
       const parsed = JSON.parse(String(reader.result || ''));
       const imported = hlukomerNormalizeImportedCalibration(parsed);
       if (!confirm(`Načíst kalibraci „${imported.name}“?\n\nSoučasná kalibrace bude nahrazena.`)) return;
-
       localStorage.setItem('hlukomer.offsetDB.v2', String(imported.splOffsetDb));
       localStorage.setItem('hlukomer.freqCalibration.v2', JSON.stringify(imported.frequencyCalibrationDb));
       localStorage.setItem(HLUKOMER_CAL_PROFILE_NAME_KEY, imported.name);
       if (imported.referenceSource) localStorage.setItem(HLUKOMER_CAL_REFERENCE_KEY, JSON.stringify(imported.referenceSource));
       else localStorage.removeItem(HLUKOMER_CAL_REFERENCE_KEY);
-
       if (nameInput) nameInput.value = imported.name;
       alert('Kalibrace byla načtena. Aplikace se nyní obnoví.');
       location.reload();
@@ -166,87 +144,75 @@ function hlukomerImportCalibrationFile(file, nameInput) {
   reader.readAsText(file, 'utf-8');
 }
 
-/* Stav rozbalovacích sekcí + UI pro export/import kalibrace.
-   Po načtení jsou všechny sekce v panelu Analýza zavřené.
-   Uložená měření se sama otevřou pouze při přidání nového měření. */
-window.addEventListener('DOMContentLoaded', () => {
+function hlukomerEnsureCalibrationProfileUi() {
+  if (document.getElementById('calibrationFileDetails')) return document.getElementById('calibrationFileDetails');
+
   const referenceDetails = document.getElementById('referenceCalibrationPreview');
-  if (referenceDetails && !document.getElementById('calibrationFileDetails')) {
-    const details = document.createElement('details');
-    details.id = 'calibrationFileDetails';
+  const aside = document.querySelector('aside.card') || document.querySelector('aside');
+  if (!referenceDetails && !aside) return null;
 
-    const summary = document.createElement('summary');
-    summary.textContent = 'Kalibrační profil';
+  const details = document.createElement('details');
+  details.id = 'calibrationFileDetails';
+  details.open = false;
+  details.innerHTML = `
+    <summary>Kalibrační profil</summary>
+    <div class="detailbody">
+      <label class="calSmall" for="calibrationProfileName">Název profilu</label>
+      <input id="calibrationProfileName" type="text" value="Moje kalibrace">
+      <div class="savedActions">
+        <button type="button" id="downloadCalibrationJsonBtn">Stáhnout kalibraci JSON</button>
+        <button type="button" id="loadCalibrationJsonBtn">Načíst kalibraci JSON</button>
+      </div>
+      <input id="calibrationJsonFile" type="file" accept=".json,application/json" hidden>
+      <div class="calSmall">JSON obsahuje SPL offset a frekvenční korekce 31,5 Hz až 16 kHz. Při načtení nahradí současnou kalibraci.</div>
+    </div>`;
 
-    const body = document.createElement('div');
-    body.className = 'detailbody';
+  if (referenceDetails) referenceDetails.insertAdjacentElement('afterend', details);
+  else aside.appendChild(details);
 
-    const label = document.createElement('label');
-    label.className = 'calSmall';
-    label.setAttribute('for', 'calibrationProfileName');
-    label.textContent = 'Název profilu';
+  const nameInput = details.querySelector('#calibrationProfileName');
+  const downloadBtn = details.querySelector('#downloadCalibrationJsonBtn');
+  const loadBtn = details.querySelector('#loadCalibrationJsonBtn');
+  const fileInput = details.querySelector('#calibrationJsonFile');
 
-    const nameInput = document.createElement('input');
-    nameInput.id = 'calibrationProfileName';
-    nameInput.type = 'text';
-    nameInput.value = localStorage.getItem(HLUKOMER_CAL_PROFILE_NAME_KEY) || 'Moje kalibrace';
-    nameInput.addEventListener('change', () => {
-      const value = nameInput.value.trim() || 'Moje kalibrace';
-      nameInput.value = value;
-      localStorage.setItem(HLUKOMER_CAL_PROFILE_NAME_KEY, value);
-    });
-
-    const actions = document.createElement('div');
-    actions.className = 'savedActions';
-
-    const downloadBtn = document.createElement('button');
-    downloadBtn.type = 'button';
-    downloadBtn.textContent = 'Stáhnout kalibraci JSON';
-    downloadBtn.addEventListener('click', () => {
-      const value = nameInput.value.trim() || 'Moje kalibrace';
-      localStorage.setItem(HLUKOMER_CAL_PROFILE_NAME_KEY, value);
-      hlukomerDownloadCalibration(value);
-    });
-
-    const loadBtn = document.createElement('button');
-    loadBtn.type = 'button';
-    loadBtn.textContent = 'Načíst kalibraci JSON';
-
-    const fileInput = document.createElement('input');
-    fileInput.type = 'file';
-    fileInput.accept = '.json,application/json';
-    fileInput.hidden = true;
-    loadBtn.addEventListener('click', () => {
-      fileInput.value = '';
-      fileInput.click();
-    });
-    fileInput.addEventListener('change', () => hlukomerImportCalibrationFile(fileInput.files?.[0], nameInput));
-
-    const note = document.createElement('div');
-    note.className = 'calSmall';
-    note.textContent = 'JSON obsahuje SPL offset a frekvenční korekce 31,5 Hz až 16 kHz. Při načtení nahradí současnou kalibraci.';
-
-    actions.append(downloadBtn, loadBtn);
-    body.append(label, nameInput, actions, fileInput, note);
-    details.append(summary, body);
-    referenceDetails.insertAdjacentElement('afterend', details);
-  }
-
-  document.querySelectorAll('aside details').forEach(details => {
-    details.open = false;
+  nameInput.value = localStorage.getItem(HLUKOMER_CAL_PROFILE_NAME_KEY) || 'Moje kalibrace';
+  nameInput.addEventListener('change', () => {
+    const value = nameInput.value.trim() || 'Moje kalibrace';
+    nameInput.value = value;
+    localStorage.setItem(HLUKOMER_CAL_PROFILE_NAME_KEY, value);
   });
+  downloadBtn.addEventListener('click', () => {
+    const value = nameInput.value.trim() || 'Moje kalibrace';
+    localStorage.setItem(HLUKOMER_CAL_PROFILE_NAME_KEY, value);
+    hlukomerDownloadCalibration(value);
+  });
+  loadBtn.addEventListener('click', () => {
+    fileInput.value = '';
+    fileInput.click();
+  });
+  fileInput.addEventListener('change', () => hlukomerImportCalibrationFile(fileInput.files?.[0], nameInput));
+  return details;
+}
 
+function hlukomerSetupDetailsState() {
+  document.querySelectorAll('aside details').forEach(details => { details.open = false; });
   const savedDetails = document.getElementById('timedSeriesDetails');
   const savedList = document.getElementById('timedMeasurements');
-  if (!savedDetails || !savedList) return;
-
+  if (!savedDetails || !savedList || savedList.dataset.autoOpenReady === '1') return;
+  savedList.dataset.autoOpenReady = '1';
   let previousCount = savedList.children.length;
-
   const observer = new MutationObserver(() => {
     const currentCount = savedList.children.length;
     if (currentCount > previousCount) savedDetails.open = true;
     previousCount = currentCount;
   });
-
   observer.observe(savedList, { childList: true });
+}
+
+/* Skript je na konci body, proto UI vytvoříme okamžitě. DOMContentLoaded je jen záloha. */
+hlukomerEnsureCalibrationProfileUi();
+hlukomerSetupDetailsState();
+window.addEventListener('DOMContentLoaded', () => {
+  hlukomerEnsureCalibrationProfileUi();
+  hlukomerSetupDetailsState();
 });
