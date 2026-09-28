@@ -27,6 +27,31 @@ const HLUKOMER_CAL_FREQS = [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 160
 const HLUKOMER_CAL_PROFILE_NAME_KEY = 'hlukomer.calibrationProfileName.v1';
 const HLUKOMER_CAL_REFERENCE_KEY = 'hlukomer.calibrationReferenceSource.v1';
 
+/* Oprava migrace uložených měření.
+   Pokud už nový seznam existuje a je prázdný, znamená to, že uživatel
+   měření skutečně smazal. Staré klíče z předchozích verzí proto odstraníme,
+   aby je timed.js při dalším spuštění znovu nenamigroval. */
+(() => {
+  const currentKey = 'hlukomer.results.v4';
+  const legacyKeys = [
+    'hlukomer.results.v3',
+    'hlukomer.timedResults.v2',
+    'hlukomer.timedResults.v1',
+    'hlukomer.manualResults.v2',
+    'hlukomer.measurements.v1'
+  ];
+
+  const raw = localStorage.getItem(currentKey);
+  if (raw === null) return;
+
+  try {
+    const current = JSON.parse(raw);
+    if (Array.isArray(current) && current.length === 0) {
+      legacyKeys.forEach(key => localStorage.removeItem(key));
+    }
+  } catch (_) {}
+})();
+
 /* Ruční SPL kalibrace bez horního limitu 100 dB. */
 (() => {
   const offsetInput = document.getElementById('offsetNum');
