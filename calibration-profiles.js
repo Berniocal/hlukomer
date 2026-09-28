@@ -25,3 +25,26 @@ window.HLUKOMER_CALIBRATION_PROFILES = [
     reference: null
   }
 ];
+
+/* Stav rozbalovacích sekcí.
+   Po načtení jsou všechny sekce v panelu Analýza zavřené.
+   Uložená měření se sama otevřou pouze při přidání nového měření. */
+window.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('aside details').forEach(details => {
+    details.open = false;
+  });
+
+  const savedDetails = document.getElementById('timedSeriesDetails');
+  const savedList = document.getElementById('timedMeasurements');
+  if (!savedDetails || !savedList) return;
+
+  let previousCount = savedList.children.length;
+
+  const observer = new MutationObserver(() => {
+    const currentCount = savedList.children.length;
+    if (currentCount > previousCount) savedDetails.open = true;
+    previousCount = currentCount;
+  });
+
+  observer.observe(savedList, { childList: true });
+});
