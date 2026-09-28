@@ -1,4 +1,4 @@
-const CACHE = "noise-meter-v14";
+const CACHE = "noise-meter-v15";
 const ASSETS = [
   "./",
   "./index.html",
