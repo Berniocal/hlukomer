@@ -1,0 +1,22 @@
+{
+  "version": "Bernio Calibration Track v1",
+  "sampleRateHz": 44100,
+  "channels": 1,
+  "durationSec": 150,
+  "timeline": [
+    {"from": 0, "to": 5, "content": "ticho"},
+    {"at": 5.0, "content": "chirp 1", "sweepHz": [250, 8000], "durationMs": 30},
+    {"at": 8.0, "content": "chirp 2", "sweepHz": [250, 8000], "durationMs": 30},
+    {"at": 11.0, "content": "chirp 3", "sweepHz": [250, 8000], "durationMs": 30},
+    {"from": 14, "to": 44, "content": "ticho pro měření hluku pozadí"},
+    {"from": 45, "to": 105, "content": "růžový šum", "purpose": "kalibrace"},
+    {"from": 105, "to": 115, "content": "ticho / přechod"},
+    {"from": 115, "to": 145, "content": "bílý šum", "purpose": "kontrola kalibrace"},
+    {"from": 145, "to": 150, "content": "ticho / konec"}
+  ],
+  "notes": [
+    "WAV je doporučen pro test dozvuku a časných odrazů.",
+    "MP3 je náhradní varianta pro přehrávače, které WAV nepodporují.",
+    "Referenční profil reproduktoru musí být vytvořen zvlášť pro finální WAV a MP3 stopu, protože MP3 může mírně změnit krátké impulzy i spektrum."
+  ]
+}
