@@ -5,6 +5,8 @@ on:
   push:
     paths:
       - 'calibration/generate_calibration_track.py'
+      - 'calibration/patch_calibration_track_ui.py'
+      - 'calibration-track.js'
       - '.github/workflows/generate-calibration-track.yml'
 
 permissions:
@@ -20,11 +22,12 @@ jobs:
           python-version: '3.12'
       - run: pip install numpy
       - run: python calibration/generate_calibration_track.py
-      - name: Commit generated audio
+      - run: python calibration/patch_calibration_track_ui.py
+      - name: Commit generated track and UI wiring
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add calibration/bernio_kalibrace_v1.wav calibration/bernio_kalibrace_v1.mp3
+          git add calibration/bernio_kalibrace_v1.wav calibration/bernio_kalibrace_v1.mp3 index.html sw.js
           git diff --cached --quiet && exit 0
           git commit -m "Generate Bernio calibration track v1"
           git push
