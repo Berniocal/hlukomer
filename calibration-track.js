@@ -7,8 +7,6 @@
     mp3: 'calibration/bernio_kalibrace_v1.mp3',
     durationSec: 150,
     chirpTimesSec: [5, 8, 11],
-    chirpDurationSec: 0.03,
-    chirpRangeHz: [250, 8000],
     background: [14, 44],
     pink: [45, 105],
     white: [115, 145]
@@ -16,6 +14,15 @@
 
   const ROOM_KEY = 'hlukomer.roomAcousticsTest.v1';
   const $ = id => document.getElementById(id);
+
+  const state = {
+    backgroundDbfs: null,
+    pinkDbfs: null,
+    whiteDbfs: null,
+    room: null,
+    step: 0,
+    busy: false
+  };
 
   function median(values) {
     const arr = values.filter(Number.isFinite).slice().sort((a, b) => a - b);
@@ -41,7 +48,10 @@
     if (points.length < 4) return null;
     let sx = 0, sy = 0, sxx = 0, sxy = 0;
     for (const [x, y] of points) {
-      sx += x; sy += y; sxx += x * x; sxy += x * y;
+      sx += x;
+      sy += y;
+      sxx += x * x;
+      sxy += x * y;
     }
     const n = points.length;
     const den = n * sxx - sx * sx;
@@ -75,9 +85,9 @@
     candidates.sort((a, b) => b.rms - a.rms);
     const selected = [];
     const minGap = sampleRate * 1.7;
-    for (const c of candidates) {
-      if (selected.every(x => Math.abs(x.start - c.start) >= minGap)) {
-        selected.push(c);
+    for (const candidate of candidates) {
+      if (selected.every(other => Math.abs(other.start - candidate.start) >= minGap)) {
+        selected.push(candidate);
         if (selected.length === 3) break;
       }
     }
@@ -92,8 +102,11 @@
     let peak = a;
     let peakAbs = 0;
     for (let i = a; i < b; i += 1) {
-      const v = Math.abs(samples[i]);
-      if (v > peakAbs) { peakAbs = v; peak = i; }
+      const value = Math.abs(samples[i]);
+      if (value > peakAbs) {
+        peakAbs = value;
+        peak = i;
+      }
     }
 
     const noiseStart = Math.max(0, peak - Math.round(sampleRate * 0.45));
@@ -123,6 +136,7 @@
       total += energies[i];
       cumulative[i] = total;
     }
+
     const ref = cumulative[0] || 1e-12;
     const points = [];
     let minDb = 0;
@@ -153,56 +167,203 @@
     return { rt60Sec, earlyReflectionDb, peakSnrDb: snrDb };
   }
 
-  function classify(rt, reflectionDb) {
-    const reverb = rt <= 0.5 ? ['good', 'vhodný'] : rt <= 0.8 ? ['warn', 'zvýšený'] : ['bad', 'nevhodný'];
-    const reflections = reflectionDb <= -12 ? ['good', 'malé'] : reflectionDb <= -6 ? ['warn', 'zvýšené'] : ['bad', 'silné'];
+  function classifyRoom(rt, reflectionDb) {
+    const reverb = rt <= 0.5
+      ? { level: 'good', label: 'dobrý' }
+      : rt <= 0.8
+        ? { level: 'warn', label: 'zvýšený' }
+        : { level: 'bad', label: 'příliš velký' };
+    const reflections = reflectionDb <= -12
+      ? { level: 'good', label: 'minimální' }
+      : reflectionDb <= -6
+        ? { level: 'warn', label: 'zvýšené' }
+        : { level: 'bad', label: 'silné' };
     let overall = 'good';
-    if (reverb[0] === 'bad' || reflections[0] === 'bad') overall = 'bad';
-    else if (reverb[0] === 'warn' || reflections[0] === 'warn') overall = 'warn';
+    if (reverb.level === 'bad' || reflections.level === 'bad') overall = 'bad';
+    else if (reverb.level === 'warn' || reflections.level === 'warn') overall = 'warn';
     return { reverb, reflections, overall };
   }
 
-  function render(result) {
-    if (typeof window.hlukomerRenderRoomResult === 'function') {
-      window.hlukomerRenderRoomResult(result);
-      return;
-    }
-    const classified = classify(Number(result.rt60Sec), Number(result.earlyReflectionDb));
-    const results = $('roomTestResults');
-    if (!results) return;
-    results.hidden = false;
-    $('roomReverbMetric').className = `roomMetric ${classified.reverb[0]}`;
-    $('roomReflectionMetric').className = `roomMetric ${classified.reflections[0]}`;
-    $('roomReverbStatus').textContent = classified.reverb[1];
-    $('roomReflectionStatus').textContent = classified.reflections[1];
-    $('roomReverbValue').textContent = `RT ≈ ${Number(result.rt60Sec).toFixed(2)} s`;
-    $('roomReflectionValue').textContent = `časný odraz ≈ ${Number(result.earlyReflectionDb).toFixed(1)} dB`;
+  function ensureStyles() {
+    if ($('calGuideStyles')) return;
+    const style = document.createElement('style');
+    style.id = 'calGuideStyles';
+    style.textContent = `
+      #referenceCalibrationPreview .calPreview{display:grid;gap:8px}
+      .calEntryButtons{display:grid;gap:8px}
+      .calEntryButtons button{width:100%;min-height:48px}
+      .calEntryButtons .primary{min-height:54px}
+      .calGuideParking{display:none!important}
+      .calScreen{position:fixed;inset:0;z-index:10000;background:var(--bg);color:var(--text);display:flex;flex-direction:column;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+      .calScreen[hidden]{display:none!important}
+      .calScreenHeader{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--card)}
+      .calBack{min-width:74px;min-height:40px;padding:7px 10px}
+      .calScreenTitle{font-size:17px;font-weight:850}
+      .calScreenBody{width:min(100%,720px);margin:0 auto;padding:18px 16px 34px;overflow:auto;display:grid;gap:16px}
+      .calGuideSection{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;display:grid;gap:9px}
+      .calGuideSection h3{margin:0;font-size:15px}
+      .calGuideSection p{margin:0;color:var(--muted);font-size:13px;line-height:1.45}
+      .calGuideList{margin:0;padding-left:20px;color:var(--text);font-size:13px;line-height:1.5}
+      .calDownloadGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+      .calDownload{display:flex;flex-direction:column;gap:3px;text-decoration:none;border:1px solid var(--line);background:#152236;color:var(--text);border-radius:12px;padding:12px;font-size:13px;font-weight:800}
+      .calDownload.recommended{background:#123d58;border-color:#1f7aa4}
+      .calDownload small{font-size:10px;color:var(--muted);font-weight:600}
+      .calWizardBody{align-content:start;min-height:100%}
+      .calStepTop{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--muted);font-size:12px;font-weight:750}
+      .calStepDots{display:flex;gap:5px}
+      .calStepDot{width:8px;height:8px;border-radius:50%;background:#314158}
+      .calStepDot.active{background:var(--accent)}
+      .calStepDot.done{background:var(--ok)}
+      .calWizardCard{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px 16px;display:grid;gap:14px;text-align:center}
+      .calWizardIcon{font-size:34px;line-height:1}
+      .calWizardCard h3{font-size:19px;margin:0}
+      .calWizardText{font-size:14px;line-height:1.45;color:var(--muted);margin:0}
+      .calWizardAction{width:100%;min-height:52px;font-size:15px}
+      .calWizardResult{display:grid;gap:8px;text-align:left}
+      .calResultRow{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--card2);border-radius:12px;padding:10px 12px}
+      .calResultRow span{font-size:12px;color:var(--muted)}
+      .calResultRow strong{font-size:13px;text-align:right}
+      .calStatus{border-radius:12px;padding:11px 12px;font-size:13px;font-weight:750;line-height:1.35;text-align:left}
+      .calStatus.good{background:#123329;border:1px solid #245f49}
+      .calStatus.warn{background:#3a3015;border:1px solid #756020}
+      .calStatus.bad{background:#3a2029;border:1px solid #743645}
+      .calProgress{font-size:13px;color:var(--accent);font-weight:800;min-height:20px}
+      .calWizardNav{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+      .calWizardNav button:only-child{grid-column:1/-1}
+      body.calScreenOpen{overflow:hidden}
+      @media(max-width:560px){
+        .calScreenBody{padding:14px 12px 28px}
+        .calDownloadGrid{grid-template-columns:1fr}
+        .calWizardCard{padding:16px 14px}
+        .calWizardNav{grid-template-columns:1fr}
+      }
+    `;
+    document.head.appendChild(style);
   }
 
-  async function runTrackRoomTest() {
-    const button = $('roomTestBtn');
-    const message = $('roomTestMessage');
-    const progress = $('roomTestProgress');
-    if (!button || !message || !progress) return;
+  function buildHelpScreen() {
+    if ($('calHelpScreen')) return;
+    const screen = document.createElement('section');
+    screen.id = 'calHelpScreen';
+    screen.className = 'calScreen';
+    screen.hidden = true;
+    screen.innerHTML = `
+      <div class="calScreenHeader">
+        <button type="button" class="calBack" data-cal-close="help">← Zpět</button>
+        <div class="calScreenTitle">Návod ke kalibraci</div>
+      </div>
+      <div class="calScreenBody">
+        <div class="calGuideSection">
+          <h3>Co budete potřebovat</h3>
+          <ul class="calGuideList">
+            <li>podporovaný referenční reproduktor, zatím T&G TG-113A,</li>
+            <li>telefon s aplikací Hlukoměr,</li>
+            <li>kalibrační nahrávku Bernio v1,</li>
+            <li>metr pro nastavení vzdálenosti 1,50 m,</li>
+            <li>co nejtišší místnost.</li>
+          </ul>
+        </div>
+        <div class="calGuideSection">
+          <h3>Stáhněte kalibrační nahrávku</h3>
+          <p>WAV je doporučený, protože lépe zachová krátké měřicí chirpy a jejich odrazy. Pokud ho reproduktor nepřehraje, použijte MP3.</p>
+          <div class="calDownloadGrid">
+            <a class="calDownload recommended" href="${TRACK.wav}" download>Stáhnout WAV · doporučeno<small>nejlepší pro dozvuk a odrazy</small></a>
+            <a class="calDownload" href="${TRACK.mp3}" download>Stáhnout MP3<small>použijte, pokud WAV nejde přehrát</small></a>
+          </div>
+        </div>
+        <div class="calGuideSection">
+          <h3>Jak sestavu nachystat</h3>
+          <ul class="calGuideList">
+            <li>Telefon a reproduktor dejte 1,50 m od sebe.</li>
+            <li>Mají být ve stejné výšce a namířené proti sobě.</li>
+            <li>Nedávejte je těsně ke stěně ani do rohu místnosti.</li>
+            <li>Během kalibrace s telefonem ani reproduktorem nehýbejte.</li>
+            <li>Na reproduktoru použijte předepsané nastavení hlasitosti daného profilu.</li>
+          </ul>
+        </div>
+        <div class="calGuideSection">
+          <h3>Co je v nahrávce</h3>
+          <p><strong>0:05–0:11</strong> · tři krátké chirpy pro test místnosti<br><strong>0:14–0:44</strong> · ticho pro hluk pozadí<br><strong>0:45–1:45</strong> · růžový šum pro kalibraci<br><strong>1:55–2:25</strong> · bílý šum pro kontrolu</p>
+        </div>
+        <div class="calGuideSection">
+          <h3>Pak už jen postupujte podle telefonu</h3>
+          <p>Po stisku „Začít kalibraci“ aplikace ukáže vždy jen jeden krok. Řekne vám, kdy spustit nahrávku, kdy měřit pozadí a kdy začít kalibraci nebo kontrolu.</p>
+        </div>
+      </div>`;
+    document.body.appendChild(screen);
+  }
 
+  function buildWizardScreen() {
+    if ($('calWizardScreen')) return;
+    const screen = document.createElement('section');
+    screen.id = 'calWizardScreen';
+    screen.className = 'calScreen';
+    screen.hidden = true;
+    screen.innerHTML = `
+      <div class="calScreenHeader">
+        <button type="button" class="calBack" data-cal-close="wizard">← Zpět</button>
+        <div class="calScreenTitle">Kalibrace</div>
+      </div>
+      <div class="calScreenBody calWizardBody">
+        <div class="calStepTop"><span id="calStepLabel"></span><div class="calStepDots" id="calStepDots"></div></div>
+        <div class="calWizardCard" id="calWizardCard"></div>
+      </div>`;
+    document.body.appendChild(screen);
+  }
+
+  function compactReferenceSection() {
+    const details = $('referenceCalibrationPreview');
+    const body = details?.querySelector('.detailbody');
+    if (!details || !body || body.dataset.compactGuide === '1') return;
+
+    body.dataset.compactGuide = '1';
+    const parking = document.createElement('div');
+    parking.id = 'calGuideParking';
+    parking.className = 'calGuideParking';
+    while (body.firstChild) parking.appendChild(body.firstChild);
+    document.body.appendChild(parking);
+
+    body.innerHTML = `
+      <div class="calEntryButtons">
+        <button type="button" id="openCalibrationHelp">Návod ke kalibraci</button>
+        <button type="button" class="primary" id="openCalibrationWizard">Začít kalibraci</button>
+      </div>`;
+  }
+
+  function openScreen(id) {
+    const screen = $(id);
+    if (!screen) return;
+    screen.hidden = false;
+    document.body.classList.add('calScreenOpen');
+  }
+
+  function closeScreen(id) {
+    const screen = $(id);
+    if (!screen) return;
+    screen.hidden = true;
+    if ($('calHelpScreen')?.hidden !== false && $('calWizardScreen')?.hidden !== false) {
+      document.body.classList.remove('calScreenOpen');
+    }
+  }
+
+  function isRegularMeasurementRunning() {
     const transportStop = $('transportStopBtn');
     const nativeStop = $('stopBtn');
-    if ((transportStop && !transportStop.disabled) || (nativeStop && !nativeStop.disabled)) {
-      alert('Nejdřív ukončete běžné měření hluku.');
-      return;
-    }
-    if (!navigator.mediaDevices?.getUserMedia) {
-      alert('Tento prohlížeč neumí zpřístupnit mikrofon pro test místnosti.');
-      return;
-    }
+    return Boolean((transportStop && !transportStop.disabled) || (nativeStop && !nativeStop.disabled));
+  }
 
-    button.disabled = true;
-    const oldText = button.textContent;
-    button.textContent = 'Čekám na 3 signály…';
-    message.textContent = 'Teď spusťte kalibrační nahrávku na reproduktoru. Telefon čeká na tři krátké měřicí chirpy.';
-    progress.textContent = 'Rozpoznáno: 0 / 3';
+  async function withMicrophone(durationSec, onChunk, onProgress) {
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error('Tento prohlížeč neumí použít mikrofon.');
+    if (isRegularMeasurementRunning()) throw new Error('Nejdřív ukončete běžné měření hluku.');
 
-    let stream = null, context = null, source = null, processor = null, silentGain = null;
+    let stream = null;
+    let context = null;
+    let source = null;
+    let processor = null;
+    let silentGain = null;
+    let timer = null;
+    let progressTimer = null;
+
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: {
         echoCancellation: false,
@@ -217,144 +378,360 @@
       processor = context.createScriptProcessor(1024, 1, 1);
       silentGain = context.createGain();
       silentGain.gain.value = 0;
-      const chunks = [];
-      let totalLength = 0;
-      let baseline = [];
-      let liveCount = 0;
-      let lastHit = -Infinity;
-      const started = performance.now();
 
       processor.onaudioprocess = event => {
         const input = event.inputBuffer.getChannelData(0);
-        const copy = new Float32Array(input);
-        chunks.push(copy);
-        totalLength += copy.length;
-
-        let sum = 0;
-        for (let i = 0; i < input.length; i += 1) sum += input[i] * input[i];
-        const currentRms = Math.sqrt(sum / Math.max(1, input.length));
-        const elapsed = (performance.now() - started) / 1000;
-        if (elapsed < 2.5) baseline.push(currentRms);
-        const base = median(baseline) || 0.001;
-        if (elapsed > 2 && currentRms > Math.max(base * 7, 0.008) && elapsed - lastHit > 1.7) {
-          liveCount = Math.min(3, liveCount + 1);
-          lastHit = elapsed;
-          progress.textContent = `Rozpoznáno: ${liveCount} / 3 ${'✓'.repeat(liveCount)}`;
-        }
+        onChunk?.(new Float32Array(input), context.sampleRate);
       };
 
       source.connect(processor);
       processor.connect(silentGain);
       silentGain.connect(context.destination);
 
-      const maxSec = 16;
-      await new Promise(resolve => setTimeout(resolve, maxSec * 1000));
-      processor.onaudioprocess = null;
+      const started = performance.now();
+      progressTimer = setInterval(() => {
+        const elapsed = Math.min(durationSec, (performance.now() - started) / 1000);
+        onProgress?.(elapsed, durationSec);
+      }, 150);
 
-      const samples = new Float32Array(totalLength);
-      let offset = 0;
-      for (const c of chunks) { samples.set(c, offset); offset += c.length; }
-
-      message.textContent = 'Vyhodnocuji dozvuk a časné odrazy…';
-      progress.textContent = 'Analyzuji 3 signály';
-      const chirps = detectChirps(samples, context.sampleRate);
-      if (chirps.length < 3) throw new Error('Nepodařilo se rozpoznat všechny 3 měřicí signály. Spusťte test znovu a kalibrační nahrávku spusťte až po stisku tlačítka na telefonu.');
-      const analyzed = chirps.map(c => analyzeChirp(samples, context.sampleRate, c.start)).filter(Boolean);
-      if (analyzed.length < 2) throw new Error('Měřicí signály nebyly dostatečně zřetelné proti hluku pozadí. Zkuste test znovu v tišší místnosti.');
-
-      const rt = median(analyzed.map(x => x.rt60Sec));
-      const reflection = median(analyzed.map(x => x.earlyReflectionDb));
-      const result = {
-        method: 'three-chirp-room-screening-v1',
-        referenceTrack: TRACK.id,
-        testedAt: new Date().toISOString(),
-        chirpsDetected: analyzed.length,
-        rt60Sec: Number(rt.toFixed(3)),
-        earlyReflectionDb: Number(reflection.toFixed(2)),
-        thresholds: {
-          reverberationSec: { goodMax: 0.5, warningMax: 0.8 },
-          earlyReflectionDb: { goodMax: -12, warningMax: -6 }
-        }
-      };
-      localStorage.setItem(ROOM_KEY, JSON.stringify(result));
-      render(result);
-      message.textContent = 'Test místnosti dokončen. Pokud je dozvuk i odrazy v pořádku, můžete pokračovat měřením hluku pozadí.';
-      progress.textContent = '3 / 3 ✓';
-    } catch (error) {
-      message.textContent = error?.message || 'Test místnosti se nepodařilo dokončit.';
-      progress.textContent = 'Zkuste test zopakovat.';
+      await new Promise(resolve => {
+        timer = setTimeout(resolve, durationSec * 1000);
+      });
+      onProgress?.(durationSec, durationSec);
+      return { sampleRate: context.sampleRate };
     } finally {
+      clearTimeout(timer);
+      clearInterval(progressTimer);
+      if (processor) processor.onaudioprocess = null;
       try { source?.disconnect(); } catch (_) {}
       try { processor?.disconnect(); } catch (_) {}
       try { silentGain?.disconnect(); } catch (_) {}
-      stream?.getTracks().forEach(t => t.stop());
-      if (context && context.state !== 'closed') { try { await context.close(); } catch (_) {} }
-      button.disabled = false;
-      button.textContent = oldText;
+      stream?.getTracks().forEach(track => track.stop());
+      if (context && context.state !== 'closed') {
+        try { await context.close(); } catch (_) {}
+      }
     }
   }
 
-  function ensureStyles() {
-    if ($('calibrationTrackStyles')) return;
-    const style = document.createElement('style');
-    style.id = 'calibrationTrackStyles';
-    style.textContent = `
-      .calTrackCard{display:grid;gap:9px;padding:10px;border:1px solid #33506a;background:#102538;border-radius:12px}
-      .calTrackTitle{font-size:12px;font-weight:850}
-      .calTrackDownloads{display:grid;grid-template-columns:1fr 1fr;gap:7px}
-      .calTrackDownload{display:flex;flex-direction:column;gap:2px;text-decoration:none;border:1px solid var(--line);background:#152236;color:var(--text);border-radius:11px;padding:9px 10px;font-size:12px;font-weight:800}
-      .calTrackDownload.recommended{border-color:#1f7aa4;background:#123d58}
-      .calTrackDownload small{font-size:10px;font-weight:600;color:var(--muted)}
-      .calTrackTimeline{font-size:10px;line-height:1.5;color:var(--muted)}
-      @media(max-width:560px){.calTrackDownloads{grid-template-columns:1fr}}
-    `;
-    document.head.appendChild(style);
+  async function captureLevel(durationSec, progressEl) {
+    let sum = 0;
+    let count = 0;
+    await withMicrophone(durationSec, chunk => {
+      for (let i = 0; i < chunk.length; i += 1) {
+        sum += chunk[i] * chunk[i];
+        count += 1;
+      }
+    }, (elapsed, total) => {
+      if (progressEl) progressEl.textContent = `Měřím… ${Math.ceil(elapsed)} / ${total} s`;
+    });
+    const value = Math.sqrt(sum / Math.max(1, count));
+    return 20 * Math.log10(Math.max(value, 1e-12));
   }
 
-  function ensureTrackUi() {
-    ensureStyles();
-    const details = $('referenceCalibrationPreview');
-    const body = details?.querySelector('.detailbody');
-    if (!body || $('calibrationTrackCard')) return;
+  async function runRoomTest(progressEl) {
+    const chunks = [];
+    let totalLength = 0;
+    let baseline = [];
+    let liveCount = 0;
+    let lastHit = -Infinity;
+    let startedPerf = performance.now();
+    let sampleRate = 44100;
 
-    const card = document.createElement('div');
-    card.id = 'calibrationTrackCard';
-    card.className = 'calTrackCard';
+    await withMicrophone(16, (chunk, sr) => {
+      sampleRate = sr;
+      chunks.push(chunk);
+      totalLength += chunk.length;
+
+      let sum = 0;
+      for (let i = 0; i < chunk.length; i += 1) sum += chunk[i] * chunk[i];
+      const currentRms = Math.sqrt(sum / Math.max(1, chunk.length));
+      const elapsed = (performance.now() - startedPerf) / 1000;
+      if (elapsed < 2.5) baseline.push(currentRms);
+      const base = median(baseline) || 0.001;
+      if (elapsed > 2 && currentRms > Math.max(base * 7, 0.008) && elapsed - lastHit > 1.7) {
+        liveCount = Math.min(3, liveCount + 1);
+        lastHit = elapsed;
+        if (progressEl) progressEl.textContent = `Rozpoznáno: ${liveCount} / 3 ${'✓'.repeat(liveCount)}`;
+      }
+    }, () => {});
+
+    const samples = new Float32Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      samples.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    if (progressEl) progressEl.textContent = 'Vyhodnocuji místnost…';
+    const chirps = detectChirps(samples, sampleRate);
+    if (chirps.length < 3) {
+      throw new Error('Nepodařilo se rozpoznat všechny 3 signály. Spusťte test znovu a nahrávku pusťte až po stisku tlačítka.');
+    }
+    const analyzed = chirps.map(chirp => analyzeChirp(samples, sampleRate, chirp.start)).filter(Boolean);
+    if (analyzed.length < 2) throw new Error('Signály nebyly dostatečně zřetelné. Zkuste tišší místnost nebo vyšší hlasitost referenčního zdroje.');
+
+    const rt = median(analyzed.map(item => item.rt60Sec));
+    const reflection = median(analyzed.map(item => item.earlyReflectionDb));
+    const result = {
+      method: 'three-chirp-room-screening-v1',
+      referenceTrack: TRACK.id,
+      testedAt: new Date().toISOString(),
+      chirpsDetected: analyzed.length,
+      rt60Sec: Number(rt.toFixed(3)),
+      earlyReflectionDb: Number(reflection.toFixed(2)),
+      thresholds: {
+        reverberationSec: { goodMax: 0.5, warningMax: 0.8 },
+        earlyReflectionDb: { goodMax: -12, warningMax: -6 }
+      }
+    };
+    localStorage.setItem(ROOM_KEY, JSON.stringify(result));
+    return result;
+  }
+
+  function getReferenceProfile() {
+    return (window.HLUKOMER_CALIBRATION_PROFILES || [])[0] || null;
+  }
+
+  function getReferenceNumber(profile, paths) {
+    for (const path of paths) {
+      let value = profile?.reference;
+      for (const key of path) value = value?.[key];
+      const n = Number(value);
+      if (Number.isFinite(n)) return n;
+    }
+    return null;
+  }
+
+  function validationErrorDb() {
+    const profile = getReferenceProfile();
+    const pinkRef = getReferenceNumber(profile, [['pinkLeqZ'], ['pink', 'leqZ'], ['pink', 'leq']]);
+    const whiteRef = getReferenceNumber(profile, [['whiteLeqZ'], ['white', 'leqZ'], ['white', 'leq']]);
+    if (pinkRef === null || whiteRef === null || !Number.isFinite(state.pinkDbfs) || !Number.isFinite(state.whiteDbfs)) return null;
+    const offset = pinkRef - state.pinkDbfs;
+    const estimatedWhite = state.whiteDbfs + offset;
+    return estimatedWhite - whiteRef;
+  }
+
+  const STEPS = [
+    {
+      icon: '📐',
+      title: 'Připravte sestavu',
+      text: 'Telefon a reproduktor dejte 1,50 m od sebe, ve stejné výšce a proti sobě. Připravte kalibrační nahrávku na začátek.',
+      action: 'Jsem připraven',
+      run: async () => true
+    },
+    {
+      icon: '〰️',
+      title: 'Test místnosti',
+      text: 'Stiskněte tlačítko a hned potom spusťte kalibrační nahrávku od začátku. Telefon čeká na 3 krátké chirpy.',
+      action: 'Spustit test místnosti',
+      run: async progressEl => {
+        state.room = await runRoomTest(progressEl);
+        return state.room;
+      }
+    },
+    {
+      icon: '🤫',
+      title: 'Hluk pozadí',
+      text: 'Nahrávka je teď tichá. Stiskněte tlačítko a během měření v místnosti nic nedělejte.',
+      action: 'Změřit pozadí',
+      run: async progressEl => {
+        state.backgroundDbfs = await captureLevel(5, progressEl);
+        return state.backgroundDbfs;
+      }
+    },
+    {
+      icon: '🌸',
+      title: 'Růžový šum',
+      text: 'Počkejte, až začne růžový šum. Jakmile ho uslyšíte, spusťte kalibraci.',
+      action: 'Spustit kalibraci',
+      run: async progressEl => {
+        state.pinkDbfs = await captureLevel(25, progressEl);
+        return state.pinkDbfs;
+      }
+    },
+    {
+      icon: '✓',
+      title: 'Kontrola bílým šumem',
+      text: 'Počkejte, až růžový šum skončí a začne nový bílý šum. Potom spusťte kontrolu.',
+      action: 'Spustit kontrolu',
+      run: async progressEl => {
+        state.whiteDbfs = await captureLevel(15, progressEl);
+        return state.whiteDbfs;
+      }
+    }
+  ];
+
+  function resetWizard() {
+    state.backgroundDbfs = null;
+    state.pinkDbfs = null;
+    state.whiteDbfs = null;
+    state.room = null;
+    state.step = 0;
+    state.busy = false;
+    renderWizard();
+  }
+
+  function stepResult(stepIndex) {
+    if (stepIndex === 1 && state.room) {
+      const c = classifyRoom(state.room.rt60Sec, state.room.earlyReflectionDb);
+      const statusText = c.overall === 'good'
+        ? 'Místnost je vhodná.'
+        : c.overall === 'warn'
+          ? 'Místnost je použitelná, ale není ideální.'
+          : 'Místnost není pro kalibraci vhodná.';
+      return `
+        <div class="calWizardResult">
+          <div class="calResultRow"><span>Dozvuk</span><strong>${c.reverb.label} · ${state.room.rt60Sec.toFixed(2)} s</strong></div>
+          <div class="calResultRow"><span>Odrazy</span><strong>${c.reflections.label}</strong></div>
+          <div class="calStatus ${c.overall}">${statusText}</div>
+        </div>`;
+    }
+
+    if (stepIndex === 2 && Number.isFinite(state.backgroundDbfs)) {
+      return `<div class="calStatus good">Hluk pozadí změřen ✓</div>`;
+    }
+
+    if (stepIndex === 3 && Number.isFinite(state.pinkDbfs)) {
+      const delta = Number.isFinite(state.backgroundDbfs) ? state.pinkDbfs - state.backgroundDbfs : null;
+      if (!Number.isFinite(delta)) return `<div class="calStatus warn">Kalibrační signál změřen.</div>`;
+      const level = delta >= 20 ? 'good' : delta >= 15 ? 'warn' : 'bad';
+      const text = delta >= 20
+        ? 'Podmínky jsou vhodné.'
+        : delta >= 15
+          ? 'Rozdíl je menší než ideální. Kalibrace může být méně přesná.'
+          : 'Signál je příliš blízko hluku pozadí. Zkuste tišší místnost.';
+      return `
+        <div class="calWizardResult">
+          <div class="calResultRow"><span>Signál nad pozadím</span><strong>${delta.toFixed(1)} dB</strong></div>
+          <div class="calStatus ${level}">${text}</div>
+        </div>`;
+    }
+
+    if (stepIndex === 4 && Number.isFinite(state.whiteDbfs)) {
+      const error = validationErrorDb();
+      if (Number.isFinite(error)) {
+        const abs = Math.abs(error);
+        const level = abs <= 1 ? 'good' : abs <= 2 ? 'warn' : 'bad';
+        return `
+          <div class="calWizardResult">
+            <div class="calResultRow"><span>Kontrolní odchylka</span><strong>${error >= 0 ? '+' : ''}${error.toFixed(1)} dB</strong></div>
+            <div class="calStatus ${level}">${abs <= 1 ? 'Kalibrace vyšla velmi dobře.' : abs <= 2 ? 'Kalibrace je použitelná.' : 'Odchylka je příliš velká. Doporučujeme kalibraci zopakovat.'}</div>
+          </div>`;
+      }
+      return `<div class="calStatus warn">Kontrolní šum změřen. Přesnost půjde vyčíslit po doplnění referenčních hodnot tohoto reproduktoru.</div>`;
+    }
+    return '';
+  }
+
+  function stepMayContinue(stepIndex) {
+    if (stepIndex === 1 && state.room) return classifyRoom(state.room.rt60Sec, state.room.earlyReflectionDb).overall !== 'bad';
+    if (stepIndex === 3 && Number.isFinite(state.pinkDbfs) && Number.isFinite(state.backgroundDbfs)) {
+      return state.pinkDbfs - state.backgroundDbfs >= 15;
+    }
+    return true;
+  }
+
+  function stepDone(stepIndex) {
+    if (stepIndex === 0) return state.step > 0;
+    if (stepIndex === 1) return Boolean(state.room);
+    if (stepIndex === 2) return Number.isFinite(state.backgroundDbfs);
+    if (stepIndex === 3) return Number.isFinite(state.pinkDbfs);
+    if (stepIndex === 4) return Number.isFinite(state.whiteDbfs);
+    return false;
+  }
+
+  function renderWizard() {
+    const card = $('calWizardCard');
+    const label = $('calStepLabel');
+    const dots = $('calStepDots');
+    if (!card || !label || !dots) return;
+
+    const step = STEPS[state.step];
+    label.textContent = `Krok ${state.step + 1} z ${STEPS.length}`;
+    dots.innerHTML = STEPS.map((_, index) => `<span class="calStepDot ${index < state.step ? 'done' : index === state.step ? 'active' : ''}"></span>`).join('');
+
+    const done = stepDone(state.step);
+    const final = state.step === STEPS.length - 1;
+    const canContinue = stepMayContinue(state.step);
+
     card.innerHTML = `
-      <div class="calTrackTitle">Kalibrační nahrávka · Bernio v1</div>
-      <div class="calSmall">Pro měření místnosti je <strong>WAV doporučený</strong>, protože lépe zachová krátké měřicí signály a jejich odrazy. Pokud váš reproduktor WAV nepřehraje, použijte MP3.</div>
-      <div class="calTrackDownloads">
-        <a class="calTrackDownload recommended" href="${TRACK.wav}" download>Stáhnout WAV · doporučeno<small>nejlepší pro dozvuk a odrazy</small></a>
-        <a class="calTrackDownload" href="${TRACK.mp3}" download>Stáhnout MP3<small>použijte, pokud WAV reproduktor nepřehraje</small></a>
-      </div>
-      <div class="calTrackTimeline">2:30 min · 3 měřicí chirpy → ticho pro pozadí → růžový šum pro kalibraci → bílý šum pro kontrolu.</div>`;
+      <div class="calWizardIcon">${step.icon}</div>
+      <h3>${step.title}</h3>
+      <p class="calWizardText">${step.text}</p>
+      <div class="calProgress" id="calWizardProgress"></div>
+      <div id="calWizardResult">${stepResult(state.step)}</div>
+      ${!done ? `<button type="button" class="primary calWizardAction" id="calWizardRun">${step.action}</button>` : ''}
+      ${done ? `<div class="calWizardNav">
+        ${!final && canContinue ? '<button type="button" class="primary" id="calWizardNext">Pokračovat</button>' : ''}
+        ${final ? '<button type="button" class="primary" id="calWizardFinish">Dokončit</button>' : ''}
+        ${!canContinue ? '<button type="button" id="calWizardRetry">Zkusit znovu</button>' : ''}
+      </div>` : ''}`;
 
-    const room = $('roomAcousticsTest');
-    if (room) room.insertAdjacentElement('beforebegin', card);
-    else body.prepend(card);
+    $('calWizardRun')?.addEventListener('click', runCurrentStep);
+    $('calWizardNext')?.addEventListener('click', () => {
+      state.step += 1;
+      renderWizard();
+    });
+    $('calWizardRetry')?.addEventListener('click', () => {
+      if (state.step === 1) state.room = null;
+      if (state.step === 3) state.pinkDbfs = null;
+      renderWizard();
+    });
+    $('calWizardFinish')?.addEventListener('click', () => closeScreen('calWizardScreen'));
   }
 
-  function convertRoomTestUi() {
-    const card = $('roomAcousticsTest');
-    const oldBtn = $('roomTestBtn');
-    if (!card || !oldBtn || oldBtn.dataset.trackMode === '1') return;
-    const title = card.querySelector('.roomTestTitle');
-    if (title) title.textContent = 'Test místnosti · 3 měřicí chirpy';
-    const message = $('roomTestMessage');
-    if (message) message.textContent = 'Telefon nechte na místě měření a reproduktor 1,50 m od něj. Nejdřív spusťte test na telefonu a potom kalibrační nahrávku na reproduktoru. Telefon sám rozpozná 3 krátké měřicí signály.';
-    const note = card.querySelector('.calSmall');
-    if (note) note.textContent = 'Test vyhodnotí dobu dozvuku i silné časné odrazy. Pracovní hranice: do 0,5 s vhodný dozvuk, 0,5–0,8 s zvýšený, nad 0,8 s nevhodný.';
+  async function runCurrentStep() {
+    if (state.busy) return;
+    const stepIndex = state.step;
+    const step = STEPS[stepIndex];
+    const button = $('calWizardRun');
+    const progress = $('calWizardProgress');
+    state.busy = true;
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Pracuji…';
+    }
 
-    const btn = oldBtn.cloneNode(true);
-    btn.dataset.trackMode = '1';
-    btn.textContent = 'Spustit test místnosti';
-    oldBtn.replaceWith(btn);
-    btn.addEventListener('click', runTrackRoomTest);
+    try {
+      await step.run(progress);
+      if (stepIndex === 0) {
+        state.step = 1;
+        renderWizard();
+        return;
+      }
+      renderWizard();
+    } catch (error) {
+      if (progress) progress.textContent = '';
+      const result = $('calWizardResult');
+      if (result) result.innerHTML = `<div class="calStatus bad">${error?.message || 'Krok se nepodařilo dokončit.'}</div>`;
+      if (button) {
+        button.disabled = false;
+        button.textContent = step.action;
+      }
+    } finally {
+      state.busy = false;
+    }
+  }
+
+  function bindUi() {
+    $('openCalibrationHelp')?.addEventListener('click', () => openScreen('calHelpScreen'));
+    $('openCalibrationWizard')?.addEventListener('click', () => {
+      resetWizard();
+      openScreen('calWizardScreen');
+    });
+    document.querySelectorAll('[data-cal-close="help"]').forEach(button => button.addEventListener('click', () => closeScreen('calHelpScreen')));
+    document.querySelectorAll('[data-cal-close="wizard"]').forEach(button => button.addEventListener('click', () => {
+      if (!state.busy) closeScreen('calWizardScreen');
+    }));
   }
 
   function init() {
-    ensureTrackUi();
-    convertRoomTestUi();
+    ensureStyles();
+    compactReferenceSection();
+    buildHelpScreen();
+    buildWizardScreen();
+    bindUi();
   }
 
   init();
