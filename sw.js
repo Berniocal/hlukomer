@@ -1,10 +1,11 @@
-const CACHE = "noise-meter-v16";
+const CACHE = "noise-meter-v17";
 const ASSETS = [
   "./",
   "./index.html",
   "./app.js",
   "./timed.js",
   "./calibration-profiles.js",
+  "./calibration-track.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png"
@@ -27,7 +28,7 @@ self.addEventListener("fetch", event => {
   if (req.method !== "GET") return;
 
   const url = new URL(req.url);
-  if (url.origin === location.origin && (url.pathname.endsWith("/index.html") || url.pathname.endsWith("/app.js") || url.pathname.endsWith("/timed.js") || url.pathname.endsWith("/calibration-profiles.js") || url.pathname.endsWith("/"))) {
+  if (url.origin === location.origin && (url.pathname.endsWith("/index.html") || url.pathname.endsWith("/app.js") || url.pathname.endsWith("/timed.js") || url.pathname.endsWith("/calibration-profiles.js") || url.pathname.endsWith("/calibration-track.js") || url.pathname.endsWith("/"))) {
     event.respondWith(
       fetch(req)
         .then(res => {
