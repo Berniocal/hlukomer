@@ -16,13 +16,14 @@ def add_segment(dst, start_s, src):
     dst[i0:i1] += src[:i1-i0]
 
 
-def log_chirp(duration_s=0.12, f0=200.0, f1=8000.0, peak_dbfs=-6.0):
+def log_chirp(duration_s=0.03, f0=250.0, f1=8000.0, peak_dbfs=-6.0):
+    """Krátký širokopásmový logaritmický chirp pro screening místnosti."""
     n = int(round(duration_s * SR))
     t = np.arange(n) / SR
     k = math.log(f1 / f0) / duration_s
     phase = 2 * np.pi * f0 * (np.exp(k * t) - 1) / k
     x = np.sin(phase)
-    fade_n = max(1, int(0.008 * SR))
+    fade_n = max(1, int(0.003 * SR))
     env = np.ones(n)
     env[:fade_n] = np.sin(np.linspace(0, np.pi / 2, fade_n)) ** 2
     env[-fade_n:] = np.cos(np.linspace(0, np.pi / 2, fade_n)) ** 2
@@ -46,10 +47,19 @@ def shaped_noise(duration_s, color, seed, rms_dbfs=-18.0):
 
 
 audio = np.zeros(int(round(TOTAL * SR)), dtype=np.float64)
+
+# 0–5 s: ticho. 5, 8 a 11 s: tři měřicí chirpy.
 for t in (5.0, 8.0, 11.0):
     add_segment(audio, t, log_chirp())
+
+# 14–44 s: ticho pro měření pozadí.
+# 45–105 s: růžový šum pro vlastní kalibraci.
 add_segment(audio, 45.0, shaped_noise(60.0, 'pink', 20261005))
+
+# 105–115 s: přechodové ticho.
+# 115–145 s: bílý šum pro nezávislou kontrolu kalibrace.
 add_segment(audio, 115.0, shaped_noise(30.0, 'white', 20261006))
+# 145–150 s: konečné ticho.
 
 peak = float(np.max(np.abs(audio)))
 if peak > 0.98:
