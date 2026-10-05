@@ -21,6 +21,10 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install numpy
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
       - run: python calibration/generate_calibration_track.py
       - run: python calibration/patch_calibration_track_ui.py
       - name: Commit generated track and UI wiring
