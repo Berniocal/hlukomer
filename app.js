@@ -59,7 +59,8 @@
     freqCal: 'hlukomer.freqCalibration.v2',
     response: 'hlukomer.displayResponse.v1',
     measurements: 'hlukomer.measurements.v1',
-    calibrationState: 'hlukomer.calibrationState.v1'
+    calibrationState: 'hlukomer.calibrationState.v1',
+    calibrationEngineVersion: 'hlukomer.calibrationEngineVersion.v1'
   };
 
   const CAL_FREQS = [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
@@ -203,24 +204,52 @@
     return localStorage.getItem(LS.calibrationState) || 'uncalibrated';
   }
 
+  function currentCalibrationEngineVersion() {
+    return String(window.HLUKOMER_CALIBRATION_ENGINE_VERSION || 'unknown');
+  }
+
+  function storedCalibrationEngineVersion() {
+    return localStorage.getItem(LS.calibrationEngineVersion);
+  }
+
   function isSplCalibrated() {
     return calibrationState() !== 'uncalibrated';
+  }
+
+  function isCalibrationCurrent() {
+    return isSplCalibrated() && storedCalibrationEngineVersion() === currentCalibrationEngineVersion();
   }
 
   function renderCalibrationState() {
     if (!calibrationStateBadge) return;
     calibrationStateBadge.hidden = !showSPL.checked;
     if (!showSPL.checked) return;
+
     const calibrated = isSplCalibrated();
-    calibrationStateBadge.classList.toggle('good', calibrated);
-    calibrationStateBadge.textContent = calibrated ? 'SPL kalibrováno' : 'SPL nekalibrováno';
-    calibrationStateBadge.title = calibrated
-      ? 'Absolutní SPL používá uloženou kalibraci.'
-      : 'Absolutní SPL používá pouze výchozí orientační offset. Pro přesné dB proveďte kalibraci.';
+    const current = isCalibrationCurrent();
+    calibrationStateBadge.classList.toggle('good', calibrated && current);
+
+    if (!calibrated) {
+      calibrationStateBadge.textContent = 'SPL nekalibrováno';
+      calibrationStateBadge.title = 'Absolutní SPL používá pouze výchozí orientační offset. Pro přesné dB proveďte kalibraci.';
+      return;
+    }
+
+    if (!current) {
+      calibrationStateBadge.textContent = 'SPL kalibrace starší verze';
+      calibrationStateBadge.title = 'Kalibrace byla vytvořena jinou verzí výpočtového řetězce. Doporučujeme ji ověřit nebo zopakovat.';
+      return;
+    }
+
+    calibrationStateBadge.textContent = 'SPL kalibrováno';
+    calibrationStateBadge.title = 'Absolutní SPL používá aktuální uloženou kalibraci.';
   }
 
   function setSplCalibrationState(state) {
-    localStorage.setItem(LS.calibrationState, state || 'uncalibrated');
+    const next = state || 'uncalibrated';
+    localStorage.setItem(LS.calibrationState, next);
+    if (next === 'uncalibrated') localStorage.removeItem(LS.calibrationEngineVersion);
+    else localStorage.setItem(LS.calibrationEngineVersion, currentCalibrationEngineVersion());
     renderCalibrationState();
   }
 
