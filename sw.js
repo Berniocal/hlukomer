@@ -1,4 +1,4 @@
-const CACHE = "noise-meter-v18";
+const CACHE = "noise-meter-v19";
 const ASSETS = [
   "./",
   "./index.html",
@@ -12,15 +12,30 @@ const ASSETS = [
 ];
 
 self.addEventListener("install", event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    await Promise.all(ASSETS.map(async url => {
+      const response = await fetch(url, { cache: "reload" });
+      if (!response.ok) throw new Error(`Nepodařilo se načíst ${url}`);
+      await cache.put(url, response);
+    }));
+    await self.skipWaiting();
+  })());
+});
+
+self.addEventListener("message", event => {
+  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
 });
 
 self.addEventListener("activate", event => {
-  event.waitUntil(
-    caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
-      .then(() => self.clients.claim())
-  );
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)));
+    await self.clients.claim();
+
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    await Promise.all(windows.map(client => client.navigate(client.url).catch(() => null)));
+  })());
 });
 
 self.addEventListener("fetch", event => {
@@ -28,9 +43,18 @@ self.addEventListener("fetch", event => {
   if (req.method !== "GET") return;
 
   const url = new URL(req.url);
-  if (url.origin === location.origin && (url.pathname.endsWith("/index.html") || url.pathname.endsWith("/app.js") || url.pathname.endsWith("/timed.js") || url.pathname.endsWith("/calibration-profiles.js") || url.pathname.endsWith("/calibration-track.js") || url.pathname.endsWith("/"))) {
+  const coreFile = url.origin === location.origin && (
+    url.pathname.endsWith("/index.html") ||
+    url.pathname.endsWith("/app.js") ||
+    url.pathname.endsWith("/timed.js") ||
+    url.pathname.endsWith("/calibration-profiles.js") ||
+    url.pathname.endsWith("/calibration-track.js") ||
+    url.pathname.endsWith("/")
+  );
+
+  if (coreFile) {
     event.respondWith(
-      fetch(req)
+      fetch(req, { cache: "no-store" })
         .then(res => {
           const copy = res.clone();
           caches.open(CACHE).then(cache => cache.put(req, copy));
