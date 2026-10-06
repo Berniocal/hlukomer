@@ -3,6 +3,8 @@
   'use strict';
 
   const $ = id => document.getElementById(id);
+  const MATH = window.HLUKOMER_MATH;
+  if (!MATH) throw new Error('Chybí acoustic-math.js');
 
   const startBtn = $('startBtn');
   const stopBtn = $('stopBtn');
@@ -325,37 +327,11 @@
   function fmt(v) { return Number.isFinite(v) ? v.toFixed(1) : '--'; }
 
   function weightDb(freq, type) {
-    if (!(freq > 0)) return -120;
-    if (type === 'Z') return 0;
-    const f2 = freq * freq;
-    const c12200 = 12200 * 12200;
-    if (type === 'C') {
-      const rc = (c12200 * f2) / ((f2 + 20.6 * 20.6) * (f2 + c12200));
-      return 20 * Math.log10(Math.max(rc, 1e-20)) + 0.06;
-    }
-    const num = c12200 * f2 * f2;
-    const den = (f2 + 20.6 * 20.6)
-      * Math.sqrt((f2 + 107.7 * 107.7) * (f2 + 737.9 * 737.9))
-      * (f2 + c12200);
-    const ra = num / den;
-    return 20 * Math.log10(Math.max(ra, 1e-20)) + 2.0;
+    return MATH.weightDb(freq, type);
   }
 
   function calibrationDb(freq) {
-    if (!(freq > 0)) return 0;
-    if (freq <= CAL_FREQS[0]) return freqCalibration[CAL_FREQS[0]] || 0;
-    if (freq >= CAL_FREQS[CAL_FREQS.length - 1]) return freqCalibration[CAL_FREQS[CAL_FREQS.length - 1]] || 0;
-    const lf = Math.log(freq);
-    for (let i = 0; i < CAL_FREQS.length - 1; i++) {
-      const f1 = CAL_FREQS[i], f2 = CAL_FREQS[i + 1];
-      if (freq >= f1 && freq <= f2) {
-        const t = (lf - Math.log(f1)) / (Math.log(f2) - Math.log(f1));
-        const c1 = freqCalibration[f1] || 0;
-        const c2 = freqCalibration[f2] || 0;
-        return c1 + (c2 - c1) * t;
-      }
-    }
-    return 0;
+    return MATH.calibrationDb(freq, freqCalibration, CAL_FREQS);
   }
 
   function computeRawRmsDbfs() {
@@ -426,10 +402,7 @@
   }
 
   function energyAverage(values) {
-    if (!values.length) return NaN;
-    let sum = 0;
-    values.forEach(v => { if (Number.isFinite(v)) sum += Math.pow(10, v / 10); });
-    return sum > 0 ? 10 * Math.log10(sum / values.length) : NaN;
+    return MATH.energyAverageDb(values);
   }
 
   function averageRecent(sec) {
@@ -443,8 +416,7 @@
   }
 
   function currentMeasurementAverage() {
-    if (!(sessionDurationMs > 0) || !(sessionEnergy > 0)) return NaN;
-    return 10 * Math.log10(sessionEnergy / sessionDurationMs);
+    return MATH.leqFromEnergy(sessionEnergy, sessionDurationMs);
   }
 
   function beginSession() {
