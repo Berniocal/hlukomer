@@ -371,6 +371,27 @@
         autoGainControl: false,
         channelCount: 1
       }});
+
+      const track = stream.getAudioTracks?.()[0];
+      let micStatus = null;
+      if (typeof window.hlukomerInspectMicrophoneTrack === 'function') {
+        micStatus = window.hlukomerInspectMicrophoneTrack(track);
+      } else {
+        let settings = {};
+        try { settings = typeof track?.getSettings === 'function' ? track.getSettings() : {}; } catch (_) {}
+        const keys = ['autoGainControl', 'noiseSuppression', 'echoCancellation'];
+        micStatus = { settings, active: keys.filter(key => settings[key] === true) };
+      }
+      if (micStatus?.active?.length) {
+        const labels = {
+          autoGainControl: 'automatické zesílení',
+          noiseSuppression: 'potlačení šumu',
+          echoCancellation: 'potlačení ozvěny'
+        };
+        const activeText = micStatus.active.map(key => labels[key] || key).join(', ');
+        throw new Error(`Prohlížeč ponechal zapnuté zpracování mikrofonu: ${activeText}. Pro spolehlivou kalibraci použijte prohlížeč/zařízení, kde lze tyto funkce vypnout.`);
+      }
+
       const Ctx = window.AudioContext || window.webkitAudioContext;
       context = new Ctx();
       await context.resume();
