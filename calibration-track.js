@@ -639,8 +639,11 @@
     const backgroundChangeDb = Math.abs(state.backgroundAfter.dbfs - state.backgroundBefore.dbfs);
     const bands = {};
     const usableBands = [];
+    const usableStandardBands = [];
+    const standardSet = new Set(standardCalibrationBands());
 
     calibrationBands().forEach(center => {
+      const experimental = isExperimentalBand(center);
       const fullyCovered = state.backgroundBefore.coverage?.[center] === true
         && state.pink.coverage?.[center] === true
         && state.backgroundAfter.coverage?.[center] === true;
@@ -648,9 +651,10 @@
       if (!fullyCovered) {
         bands[center] = {
           snrDb: null,
-          level: 'bad',
+          level: experimental ? 'warn' : 'bad',
           usable: false,
-          coverage: 'incomplete'
+          coverage: 'incomplete',
+          experimental
         };
         return;
       }
@@ -661,18 +665,29 @@
       const total = state.pink.bandPowers?.[center] || 0;
       const snrDb = signalToNoiseSnr(total, bg);
       const classification = classifySnr(snrDb);
+      const usable = snrDb >= 15;
       bands[center] = {
         snrDb: Number.isFinite(snrDb) ? Number(snrDb.toFixed(2)) : null,
         level: classification.level,
-        usable: snrDb >= 15,
-        coverage: 'complete'
+        usable,
+        coverage: 'complete',
+        experimental
       };
-      if (snrDb >= 15) usableBands.push(center);
+      if (usable) {
+        usableBands.push(center);
+        if (standardSet.has(center)) usableStandardBands.push(center);
+      }
     });
 
+    const profile = getReferenceProfile();
     const quality = {
       measuredAt: new Date().toISOString(),
+      calibrationEngineVersion: ENGINE_VERSION,
       referenceTrack: TRACK.id,
+      referenceProfileId: profile?.id || null,
+      referenceProfileVersion: profile?.profileVersion ?? null,
+      standardBandsHz: standardCalibrationBands(),
+      experimentalBandsHz: experimentalCalibrationBands(),
       backgroundBeforeDbfs: Number(state.backgroundBefore.dbfs.toFixed(2)),
       backgroundAfterDbfs: Number(state.backgroundAfter.dbfs.toFixed(2)),
       backgroundChangeDb: Number(backgroundChangeDb.toFixed(2)),
@@ -681,7 +696,11 @@
       analysisMaxHz: 20000,
       sampleRate: state.pink.sampleRate || state.backgroundBefore.sampleRate || state.backgroundAfter.sampleRate || null,
       bands,
-      usableBands
+      usableBands,
+      usableStandardBands,
+      technicalMetadata: technicalSummary(),
+      whiteValidation: null,
+      finalAssessment: null
     };
     state.quality = quality;
     localStorage.setItem(QUALITY_KEY, JSON.stringify(quality));
@@ -713,7 +732,7 @@
         lastHit = elapsed;
         if (progressEl) progressEl.textContent = `Rozpoznáno: ${liveCount} / 3 ${'✓'.repeat(liveCount)}`;
       }
-    }, () => {});
+    }, () => {}, 'room-test');
 
     const samples = new Float32Array(totalLength);
     let offset = 0;
