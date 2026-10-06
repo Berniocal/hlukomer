@@ -16,13 +16,16 @@ window.HLUKOMER_CALIBRATION_PROFILES = [
     minimumSignalOverBackgroundDb: 15,
     primaryNoise: 'pink',
     checkNoise: 'white',
-    noiseFiles: {
-      pinkMp3: 'calibration/ruzovy_sum_2min.mp3',
-      whiteMp3: 'calibration/bily_sum_2min.mp3'
+    calibrationTrack: {
+      id: 'bernio-calibration-track-v2',
+      version: 2,
+      wav: 'calibration/bernio_kalibrace_v2.wav',
+      mp3: 'calibration/bernio_kalibrace_v2.mp3',
+      linearityExpectedDifferenceDb: 10
     },
     recommendedOctavesHz: [125, 250, 500, 1000, 2000, 4000, 8000],
     experimentalOctavesHz: [16000],
-    referenceTrackId: 'bernio-calibration-track-v1',
+    referenceTrackId: 'bernio-calibration-track-v2',
     reference: null
   }
 ];
