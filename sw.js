@@ -1,12 +1,12 @@
-const CACHE = "noise-meter-v21";
+const CACHE = "noise-meter-v22";
 const ASSETS = [
   "./",
-  "./index.html?v=21",
-  "./app.js?v=21",
-  "./timed.js?v=21",
-  "./calibration-profiles.js?v=21",
-  "./calibration-track.js?v=21",
-  "./manifest.webmanifest?v=21",
+  "./index.html?v=22",
+  "./app.js?v=22",
+  "./timed.js?v=22",
+  "./calibration-profiles.js?v=22",
+  "./calibration-track.js?v=22",
+  "./manifest.webmanifest?v=22",
   "./icons/icon-192.png",
   "./icons/icon-512.png"
 ];
