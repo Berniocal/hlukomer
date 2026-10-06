@@ -248,6 +248,7 @@
   }
 
   function finiteOrNull(v) {
+    if (v === null || v === undefined || v === '') return null;
     const n = Number(v);
     return Number.isFinite(n) ? n : null;
   }
@@ -841,6 +842,7 @@
   }
 
   function numCs(v, digits = 2) {
+    if (v === null || v === undefined || v === '') return '';
     return Number.isFinite(Number(v)) ? Number(v).toFixed(digits).replace('.', ',') : '';
   }
 
