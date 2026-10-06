@@ -572,9 +572,9 @@
     const usableBands = [];
 
     calibrationBands().forEach(center => {
-      const fullyCovered = state.backgroundBefore.coverage?.[center] !== false
-        && state.pink.coverage?.[center] !== false
-        && state.backgroundAfter.coverage?.[center] !== false;
+      const fullyCovered = state.backgroundBefore.coverage?.[center] === true
+        && state.pink.coverage?.[center] === true
+        && state.backgroundAfter.coverage?.[center] === true;
 
       if (!fullyCovered) {
         bands[center] = {
