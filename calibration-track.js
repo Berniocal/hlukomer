@@ -8,10 +8,10 @@
     mp3: 'calibration/bernio_kalibrace_v2.mp3',
     durationSec: 215,
     chirpTimesSec: [5, 8, 11],
-    linearityLow: [20, 35],
-    linearityHigh: [40, 55],
+    backgroundBefore: [20, 45],
+    linearityLow: [50, 65],
+    linearityHigh: [70, 85],
     linearityExpectedDifferenceDb: 10,
-    backgroundBefore: [60, 90],
     pink: [90, 150],
     backgroundAfter: [150, 180],
     white: [180, 210]
@@ -354,7 +354,7 @@
         </div>
         <div class="calGuideSection">
           <h3>Co je v nahrávce</h3>
-          <p><strong>0:05–0:11</strong> · tři krátké chirpy pro test místnosti<br><strong>0:20–0:35</strong> · slabší růžový šum pro test linearity<br><strong>0:40–0:55</strong> · tentýž růžový šum přesně o 10 dB výš<br><strong>1:00–1:30</strong> · ticho pro pozadí před kalibrací<br><strong>1:30–2:30</strong> · růžový šum pro kalibraci<br><strong>2:30–3:00</strong> · ticho pro pozadí po kalibraci<br><strong>3:00–3:30</strong> · bílý šum pro kontrolu</p>
+          <p><strong>0:05–0:11</strong> · tři krátké chirpy pro test místnosti<br><strong>0:20–0:45</strong> · ticho pro pozadí před kalibrací<br><strong>0:50–1:05</strong> · slabší růžový šum pro test linearity<br><strong>1:10–1:25</strong> · tentýž růžový šum přesně o 10 dB výš<br><strong>1:30–2:30</strong> · růžový šum pro kalibraci<br><strong>2:30–3:00</strong> · ticho pro pozadí po kalibraci<br><strong>3:00–3:30</strong> · bílý šum pro kontrolu</p>
         </div>
         <div class="calGuideSection">
           <h3>Pak už jen postupujte podle telefonu</h3>
