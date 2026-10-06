@@ -350,7 +350,7 @@
         </div>
         <div class="calGuideSection">
           <h3>Pak už jen postupujte podle telefonu</h3>
-          <p>Po stisku „Začít kalibraci“ aplikace ukáže vždy jen jeden krok. Řekne vám, kdy spustit nahrávku, kdy měřit pozadí a kdy začít kalibraci nebo kontrolu.</p>
+          <p>Po stisku „Začít kalibraci“ aplikace ukáže vždy jen jeden krok. Standardní kalibrační rozsah je 125 Hz–8 kHz. Pásmo 16 kHz zatím ponecháváme experimentálně a vyhodnotíme ho až podle referenčních měření.</p>
         </div>
       </div>`;
     document.body.appendChild(screen);
@@ -1004,6 +1004,8 @@
       run: async progressEl => {
         state.white = await captureAcousticSample(15, progressEl, 'white');
         state.whiteDbfs = state.white.dbfs;
+        evaluateWhiteValidation();
+        evaluateFinalQuality();
         return state.white;
       }
     }
@@ -1019,6 +1021,8 @@
     state.whiteDbfs = null;
     state.room = null;
     state.quality = null;
+    state.technicalCaptures = [];
+    state.finalQuality = null;
     state.step = 0;
     state.busy = false;
     renderWizard();
@@ -1051,37 +1055,38 @@
     if (stepIndex === 4 && state.backgroundAfter && state.quality) {
       const q = state.quality;
       const overallSnr = Number(q.overallSnrDb);
-      const overallClass = classifySnr(overallSnr);
       const stable = q.backgroundChangeDb <= 3;
       const rows = calibrationBands().map(center => {
         const item = q.bands?.[center] || {};
+        const experimental = isExperimentalBand(center);
+        const name = experimental ? `${formatBand(center)} · experimentální` : formatBand(center);
         if (item.coverage === 'incomplete') {
           return `<div class="calBandRow">
-            <span>${formatBand(center)}</span>
+            <span>${name}</span>
             <strong>neúplné pásmo</strong>
-            <span class="calBandTag bad">nepoužít</span>
+            <span class="calBandTag warn">${experimental ? 'sledovat' : 'nepoužít'}</span>
           </div>`;
         }
         const snr = Number(item.snrDb);
         const cls = classifySnr(snr);
         return `<div class="calBandRow">
-          <span>${formatBand(center)}</span>
+          <span>${name}</span>
           <strong>${Number.isFinite(snr) ? snr.toFixed(1) + ' dB' : '—'}</strong>
-          <span class="calBandTag ${cls.level}">${cls.label}</span>
+          <span class="calBandTag ${cls.level}">${experimental ? 'experiment' : cls.label}</span>
         </div>`;
       }).join('');
 
-      const usable = q.usableBands?.length || 0;
-      const coveredBands = calibrationBands().filter(center => q.bands?.[center]?.coverage !== 'incomplete');
-      const total = coveredBands.length;
+      const standard = standardCalibrationBands();
+      const usable = standard.filter(center => q.bands?.[center]?.usable).length;
+      const total = standard.length;
       const statusLevel = overallSnr < 15 ? 'bad' : stable ? (usable === total ? 'good' : 'warn') : 'warn';
       const statusText = overallSnr < 15
         ? 'Celkový signál je příliš blízko hluku pozadí. Kalibraci zopakujte v tišším prostředí.'
         : !stable
           ? 'Hluk pozadí se během kalibrace změnil o více než 3 dB. Výsledek může být méně spolehlivý.'
           : usable === total
-            ? 'Všechna plně měřitelná pásma mají dostatečný odstup od pozadí.'
-            : `${usable} z ${total} plně měřitelných pásem lze použít. Pásma pod 15 dB ani neúplná pásma se do frekvenční kalibrace nezahrnou.`;
+            ? 'Všech 7 standardních pásem 125 Hz–8 kHz má dostatečný odstup od pozadí.'
+            : `${usable} z ${total} standardních pásem lze použít. Pásma pod 15 dB se do frekvenční kalibrace nezahrnou.`;
 
       return `
         <div class="calWizardResult">
@@ -1093,17 +1098,60 @@
     }
 
     if (stepIndex === 5 && state.white) {
-      const error = validationErrorDb();
-      if (Number.isFinite(error)) {
-        const abs = Math.abs(error);
-        const level = abs <= 1 ? 'good' : abs <= 2 ? 'warn' : 'bad';
-        return `
-          <div class="calWizardResult">
-            <div class="calResultRow"><span>Kontrolní odchylka</span><strong>${error >= 0 ? '+' : ''}${error.toFixed(1)} dB</strong></div>
-            <div class="calStatus ${level}">${abs <= 1 ? 'Kalibrace vyšla velmi dobře.' : abs <= 2 ? 'Kalibrace je použitelná.' : 'Odchylka je příliš velká. Doporučujeme kalibraci zopakovat.'}</div>
+      const validation = state.quality?.whiteValidation || evaluateWhiteValidation();
+      const finalQuality = state.finalQuality || evaluateFinalQuality();
+      const overallError = Number(validation?.overallErrorDb);
+
+      const rows = standardCalibrationBands().map(center => {
+        const item = validation?.bands?.[center] || {};
+        if (item.coverage === 'incomplete') {
+          return `<div class="calBandRow"><span>${formatBand(center)}</span><strong>neúplné</strong><span class="calBandTag bad">nelze ověřit</span></div>`;
+        }
+        const error = Number(item.errorDb);
+        const snr = Number(item.whiteSnrDb);
+        if (Number.isFinite(error)) {
+          const abs = Math.abs(error);
+          const level = abs <= 1 ? 'good' : abs <= 2 ? 'warn' : 'bad';
+          return `<div class="calBandRow">
+            <span>${formatBand(center)}</span>
+            <strong>${error >= 0 ? '+' : ''}${error.toFixed(1)} dB</strong>
+            <span class="calBandTag ${level}">${abs <= 1 ? 'výborné' : abs <= 2 ? 'použitelné' : 'mimo'}</span>
           </div>`;
-      }
-      return '<div class="calStatus warn">Kontrolní šum změřen. Přesnost půjde vyčíslit po doplnění referenčních hodnot tohoto reproduktoru.</div>';
+        }
+        const cls = classifySnr(snr);
+        return `<div class="calBandRow">
+          <span>${formatBand(center)}</span>
+          <strong>${Number.isFinite(snr) ? 'SNR ' + snr.toFixed(1) + ' dB' : '—'}</strong>
+          <span class="calBandTag ${cls.level}">bez reference</span>
+        </div>`;
+      }).join('');
+
+      const expRows = experimentalCalibrationBands().map(center => {
+        const item = validation?.bands?.[center] || {};
+        const error = Number(item.errorDb);
+        const snr = Number(item.whiteSnrDb);
+        const value = Number.isFinite(error)
+          ? `${error >= 0 ? '+' : ''}${error.toFixed(1)} dB`
+          : Number.isFinite(snr) ? `SNR ${snr.toFixed(1)} dB` : 'neúplné pásmo';
+        return `<div class="calBandRow">
+          <span>${formatBand(center)} · experimentální</span>
+          <strong>${value}</strong>
+          <span class="calBandTag warn">jen sledovat</span>
+        </div>`;
+      }).join('');
+
+      const finalLevel = finalQuality?.level === 'good' ? 'good' : finalQuality?.level === 'bad' ? 'bad' : 'warn';
+      const finalText = finalQuality
+        ? `Kvalita kalibrace: ${finalQuality.label}.${finalQuality.reasons?.length ? ' ' + finalQuality.reasons.join(' ') : ''}`
+        : 'Kvalitu kalibrace se nepodařilo vyhodnotit.';
+
+      return `
+        <div class="calWizardResult">
+          ${Number.isFinite(overallError) ? `<div class="calResultRow"><span>Celková kontrolní odchylka</span><strong>${overallError >= 0 ? '+' : ''}${overallError.toFixed(1)} dB</strong></div>` : ''}
+          <div class="calBandTable">${rows}${expRows}</div>
+          ${!Number.isFinite(overallError) ? '<div class="calStatus warn">Bílý šum je změřen po pásmech. Přesnou odchylku dopočítáme po doplnění referenčních hodnot reproduktoru.</div>' : ''}
+          <div class="calStatus ${finalLevel}">${finalText}</div>
+        </div>`;
     }
     return '';
   }
