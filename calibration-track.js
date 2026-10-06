@@ -1007,9 +1007,12 @@
       else if (white.warnBands > 0 && level === 'good') level = 'warn';
     }
 
+    const linearityMeasuredText = Number.isFinite(Number(linearity?.measuredDifferenceDb))
+      ? Number(linearity.measuredDifferenceDb).toFixed(1) + ' dB'
+      : 'nelze určit';
     if (!linearity) reasons.push('Test linearity nebyl vyhodnocen.');
-    else if (linearity.level === 'bad') reasons.push(`Linearita nevyhověla: naměřeno ${linearity.measuredDifferenceDb.toFixed(1)} dB místo 10,0 dB.`);
-    else if (linearity.level === 'warn') reasons.push(`Linearita je hraniční: naměřeno ${linearity.measuredDifferenceDb.toFixed(1)} dB místo 10,0 dB.`);
+    else if (linearity.level === 'bad') reasons.push(`Linearita nevyhověla: naměřeno ${linearityMeasuredText}, očekáváno 10,0 dB.`);
+    else if (linearity.level === 'warn') reasons.push(`Linearita je hraniční: naměřeno ${linearityMeasuredText}, očekáváno 10,0 dB.`);
     if (!wavReference) reasons.push('Použita MP3 stopa; referenční variantou je WAV.');
     if (!backgroundStable) reasons.push('Pozadí se během kalibrace změnilo o více než 3 dB.');
     if (standardUsable.length < standard.length) reasons.push(`Použitelných je ${standardUsable.length} z ${standard.length} standardních pásem.`);
