@@ -1159,7 +1159,7 @@
   function stepMayContinue(stepIndex) {
     if (stepIndex === 1 && state.room) return classifyRoom(state.room.rt60Sec, state.room.earlyReflectionDb).overall !== 'bad';
     if (stepIndex === 4 && state.quality) {
-      return Number(state.quality.overallSnrDb) >= 15 && (state.quality.usableBands?.length || 0) > 0;
+      return Number(state.quality.overallSnrDb) >= 15 && (state.quality.usableStandardBands?.length || 0) > 0;
     }
     return true;
   }
