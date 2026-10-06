@@ -1,7 +1,9 @@
 /* Připravené profily pro budoucí kalibraci podle referenčního zdroje. */
+window.HLUKOMER_CALIBRATION_ENGINE_VERSION = '2.0.0';
 window.HLUKOMER_CALIBRATION_PROFILES = [
   {
     id: 'tg113a',
+    profileVersion: 1,
     name: 'T&G TG-113A',
     productCode: 'T615A',
     status: 'waiting-for-reference-values',
@@ -18,7 +20,9 @@ window.HLUKOMER_CALIBRATION_PROFILES = [
       pinkMp3: 'calibration/ruzovy_sum_2min.mp3',
       whiteMp3: 'calibration/bily_sum_2min.mp3'
     },
-    recommendedOctavesHz: [125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+    recommendedOctavesHz: [125, 250, 500, 1000, 2000, 4000, 8000],
+    experimentalOctavesHz: [16000],
+    referenceTrackId: 'bernio-calibration-track-v1',
     reference: null
   }
 ];
@@ -28,6 +32,7 @@ const HLUKOMER_CAL_PROFILE_NAME_KEY = 'hlukomer.calibrationProfileName.v1';
 const HLUKOMER_CAL_REFERENCE_KEY = 'hlukomer.calibrationReferenceSource.v1';
 const HLUKOMER_ROOM_TEST_KEY = 'hlukomer.roomAcousticsTest.v1';
 const HLUKOMER_CAL_QUALITY_KEY = 'hlukomer.calibrationQuality.v1';
+const HLUKOMER_CAL_ENGINE_KEY = 'hlukomer.calibrationEngineVersion.v1';
 
 /* Oprava migrace uložených měření.
    Pokud už nový seznam existuje a je prázdný, znamená to, že uživatel
@@ -85,7 +90,11 @@ function hlukomerCurrentReferenceSource() {
       name: profile.name,
       productCode: profile.productCode || null,
       distanceM: profile.distanceM ?? null,
-      primaryNoise: profile.primaryNoise || null
+      primaryNoise: profile.primaryNoise || null,
+      profileVersion: profile.profileVersion ?? null,
+      referenceTrackId: profile.referenceTrackId || null,
+      recommendedOctavesHz: profile.recommendedOctavesHz || [],
+      experimentalOctavesHz: profile.experimentalOctavesHz || []
     };
   }
   try {
@@ -98,11 +107,13 @@ function hlukomerDownloadCalibration(profileName) {
   const offset = Number(localStorage.getItem('hlukomer.offsetDB.v2') ?? localStorage.getItem('noiseMeterOffsetDB') ?? 40);
   const data = {
     format: 'bernio-hlukomer-calibration',
-    version: 1,
+    version: 2,
+    calibrationEngineVersion: window.HLUKOMER_CALIBRATION_ENGINE_VERSION,
     name: profileName || 'Kalibrace hlukoměru',
     createdAt: new Date().toISOString(),
     splOffsetDb: Number.isFinite(offset) ? offset : 40,
     calibrationState: localStorage.getItem('hlukomer.calibrationState.v1') || 'uncalibrated',
+    calibrationCreatedWithEngine: localStorage.getItem(HLUKOMER_CAL_ENGINE_KEY) || null,
     frequencyCalibrationDb: hlukomerReadFrequencyCalibration(),
     referenceSource: hlukomerCurrentReferenceSource(),
     roomAcoustics: hlukomerReadRoomAcoustics(),
@@ -145,7 +156,10 @@ function hlukomerNormalizeImportedCalibration(data) {
     splOffsetDb: offset,
     frequencyCalibrationDb,
     referenceSource: data.referenceSource && typeof data.referenceSource === 'object' ? data.referenceSource : null,
-    roomAcoustics: data.roomAcoustics && typeof data.roomAcoustics === 'object' && !Array.isArray(data.roomAcoustics) ? data.roomAcoustics : null
+    roomAcoustics: data.roomAcoustics && typeof data.roomAcoustics === 'object' && !Array.isArray(data.roomAcoustics) ? data.roomAcoustics : null,
+    calibrationEngineVersion: typeof data.calibrationEngineVersion === 'string' ? data.calibrationEngineVersion : null,
+    calibrationCreatedWithEngine: typeof data.calibrationCreatedWithEngine === 'string' ? data.calibrationCreatedWithEngine : null,
+    calibrationQuality: data.calibrationQuality && typeof data.calibrationQuality === 'object' && !Array.isArray(data.calibrationQuality) ? data.calibrationQuality : null
   };
 }
 
@@ -160,6 +174,10 @@ function hlukomerImportCalibrationFile(file, nameInput) {
       localStorage.setItem('hlukomer.offsetDB.v2', String(imported.splOffsetDb));
       localStorage.setItem('hlukomer.freqCalibration.v2', JSON.stringify(imported.frequencyCalibrationDb));
       localStorage.setItem('hlukomer.calibrationState.v1', 'imported');
+      const importedEngine = imported.calibrationCreatedWithEngine || imported.calibrationEngineVersion;
+      if (importedEngine) localStorage.setItem(HLUKOMER_CAL_ENGINE_KEY, importedEngine);
+      else localStorage.removeItem(HLUKOMER_CAL_ENGINE_KEY);
+      if (imported.calibrationQuality) localStorage.setItem(HLUKOMER_CAL_QUALITY_KEY, JSON.stringify(imported.calibrationQuality));
       localStorage.setItem(HLUKOMER_CAL_PROFILE_NAME_KEY, imported.name);
       if (imported.referenceSource) localStorage.setItem(HLUKOMER_CAL_REFERENCE_KEY, JSON.stringify(imported.referenceSource));
       else localStorage.removeItem(HLUKOMER_CAL_REFERENCE_KEY);
