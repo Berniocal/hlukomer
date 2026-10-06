@@ -17,8 +17,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install generator dependency
-        run: python -m pip install --disable-pip-version-check numpy
+      - name: Install generator dependencies
+        run: |
+          python -m pip install --disable-pip-version-check numpy
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
       - name: Generate WAV, MP3 and timing metadata
         run: python calibration/generate_calibration_track_v2.py
       - name: Commit generated reference files
