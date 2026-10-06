@@ -521,7 +521,7 @@
 
       if (context.audioWorklet && typeof AudioWorkletNode === 'function') {
         try {
-          await context.audioWorklet.addModule('measurement-worklet.js?v=27');
+          await context.audioWorklet.addModule('measurement-worklet.js?v=28');
           worklet = new AudioWorkletNode(context, 'hlukomer-capture', {
             numberOfInputs: 1,
             numberOfOutputs: 1,
