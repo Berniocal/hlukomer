@@ -415,19 +415,64 @@
     return Boolean((transportStop && !transportStop.disabled) || (nativeStop && !nativeStop.disabled));
   }
 
-  async function withMicrophone(durationSec, onChunk, onProgress, onSpectrum) {
+  function technicalMetadataSnapshot(track, context, captureEngine, label) {
+    let settings = {};
+    try { settings = typeof track?.getSettings === 'function' ? track.getSettings() : {}; }
+    catch (_) { settings = {}; }
+
+    const entry = {
+      label,
+      capturedAt: new Date().toISOString(),
+      captureEngine,
+      audioContextSampleRate: Number(context?.sampleRate) || null,
+      trackSettings: {
+        sampleRate: Number(settings.sampleRate) || null,
+        channelCount: Number(settings.channelCount) || null,
+        autoGainControl: typeof settings.autoGainControl === 'boolean' ? settings.autoGainControl : null,
+        noiseSuppression: typeof settings.noiseSuppression === 'boolean' ? settings.noiseSuppression : null,
+        echoCancellation: typeof settings.echoCancellation === 'boolean' ? settings.echoCancellation : null
+      },
+      browser: {
+        userAgent: navigator.userAgent || null,
+        platform: navigator.platform || null,
+        language: navigator.language || null
+      }
+    };
+
+    state.technicalCaptures = state.technicalCaptures.filter(item => item.label !== label);
+    state.technicalCaptures.push(entry);
+    return entry;
+  }
+
+  function technicalSummary() {
+    const latest = state.technicalCaptures[state.technicalCaptures.length - 1] || null;
+    return {
+      calibrationEngineVersion: ENGINE_VERSION,
+      referenceTrackId: TRACK.id,
+      referenceProfileId: getReferenceProfile()?.id || null,
+      referenceProfileVersion: getReferenceProfile()?.profileVersion ?? null,
+      browser: latest?.browser || {
+        userAgent: navigator.userAgent || null,
+        platform: navigator.platform || null,
+        language: navigator.language || null
+      },
+      captures: state.technicalCaptures.slice()
+    };
+  }
+
+  async function withMicrophone(durationSec, onChunk, onProgress, captureLabel = 'measurement') {
     if (!navigator.mediaDevices?.getUserMedia) throw new Error('Tento prohlížeč neumí použít mikrofon.');
     if (isRegularMeasurementRunning()) throw new Error('Nejdřív ukončete běžné měření hluku.');
 
     let stream = null;
     let context = null;
     let source = null;
-    let processor = null;
-    let analyser = null;
-    let spectrumData = null;
+    let worklet = null;
+    let fallbackProcessor = null;
     let silentGain = null;
     let timer = null;
     let progressTimer = null;
+    let captureEngine = 'audio-worklet';
 
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: {
@@ -461,30 +506,43 @@
       context = new Ctx();
       await context.resume();
       source = context.createMediaStreamSource(stream);
-      processor = context.createScriptProcessor(1024, 1, 1);
-      analyser = context.createAnalyser();
-      analyser.fftSize = 4096;
-      analyser.smoothingTimeConstant = 0;
-      analyser.minDecibels = -140;
-      analyser.maxDecibels = 0;
-      spectrumData = new Float32Array(analyser.frequencyBinCount);
       silentGain = context.createGain();
       silentGain.gain.value = 0;
 
-      processor.onaudioprocess = event => {
-        const input = event.inputBuffer.getChannelData(0);
-        onChunk?.(new Float32Array(input), context.sampleRate);
-        if (onSpectrum) {
-          analyser.getFloatFrequencyData(spectrumData);
-          onSpectrum(new Float32Array(spectrumData), context.sampleRate, analyser.fftSize);
+      if (context.audioWorklet && typeof AudioWorkletNode === 'function') {
+        try {
+          await context.audioWorklet.addModule('measurement-worklet.js?v=27');
+          worklet = new AudioWorkletNode(context, 'hlukomer-capture', {
+            numberOfInputs: 1,
+            numberOfOutputs: 1,
+            outputChannelCount: [1]
+          });
+          worklet.port.onmessage = event => {
+            const data = event.data;
+            if (data?.type !== 'block' || !(data.samples instanceof Float32Array)) return;
+            onChunk?.(data.samples, Number(data.sampleRate) || context.sampleRate);
+          };
+          source.connect(worklet);
+          worklet.connect(silentGain);
+        } catch (error) {
+          console.warn('Kalibrační AudioWorklet není dostupný, používám záložní sběr.', error);
+          worklet = null;
         }
-      };
+      }
 
-      source.connect(processor);
-      source.connect(analyser);
-      processor.connect(silentGain);
-      analyser.connect(silentGain);
+      if (!worklet) {
+        captureEngine = 'script-processor-fallback';
+        fallbackProcessor = context.createScriptProcessor(2048, 1, 1);
+        fallbackProcessor.onaudioprocess = event => {
+          const input = event.inputBuffer.getChannelData(0);
+          onChunk?.(new Float32Array(input), context.sampleRate);
+        };
+        source.connect(fallbackProcessor);
+        fallbackProcessor.connect(silentGain);
+      }
+
       silentGain.connect(context.destination);
+      technicalMetadataSnapshot(track, context, captureEngine, captureLabel);
 
       const started = performance.now();
       progressTimer = setInterval(() => {
@@ -496,14 +554,15 @@
         timer = setTimeout(resolve, durationSec * 1000);
       });
       onProgress?.(durationSec, durationSec);
-      return { sampleRate: context.sampleRate };
+      return { sampleRate: context.sampleRate, captureEngine };
     } finally {
       clearTimeout(timer);
       clearInterval(progressTimer);
-      if (processor) processor.onaudioprocess = null;
+      if (worklet) worklet.port.onmessage = null;
+      if (fallbackProcessor) fallbackProcessor.onaudioprocess = null;
       try { source?.disconnect(); } catch (_) {}
-      try { processor?.disconnect(); } catch (_) {}
-      try { analyser?.disconnect(); } catch (_) {}
+      try { worklet?.disconnect(); } catch (_) {}
+      try { fallbackProcessor?.disconnect(); } catch (_) {}
       try { silentGain?.disconnect(); } catch (_) {}
       stream?.getTracks().forEach(track => track.stop());
       if (context && context.state !== 'closed') {
@@ -512,7 +571,7 @@
     }
   }
 
-  async function captureAcousticSample(durationSec, progressEl) {
+  async function captureAcousticSample(durationSec, progressEl, captureLabel = 'level') {
     let sumSquares = 0;
     let sampleCount = 0;
     let measuredSampleRate = 0;
@@ -520,39 +579,32 @@
     const bandFrames = emptyBandMap(0);
     const coverage = Object.fromEntries(calibrationBands().map(center => [center, null]));
 
-    await withMicrophone(durationSec, chunk => {
+    await withMicrophone(durationSec, (chunk, sampleRate) => {
+      measuredSampleRate = sampleRate;
       for (let i = 0; i < chunk.length; i += 1) {
         sumSquares += chunk[i] * chunk[i];
         sampleCount += 1;
       }
-    }, (elapsed, total) => {
-      if (progressEl) progressEl.textContent = `Měřím… ${Math.ceil(elapsed)} / ${total} s`;
-    }, (spectrum, sampleRate, fftSize) => {
-      measuredSampleRate = sampleRate;
-      const binHz = sampleRate / fftSize;
-      const nyquist = sampleRate / 2;
+
+      const block = MATH.analyzeTimeBlock(chunk, sampleRate, {
+        centers: calibrationBands(),
+        calibration: {},
+        analysisMaxHz: 20000,
+        offsetDb: 0
+      });
+      if (!block) return;
+
       calibrationBands().forEach(center => {
-        const fullyCovered = MATH.octaveFullyCovered(center, sampleRate, 20000);
-        coverage[center] = fullyCovered;
-        if (!fullyCovered) return;
-        const lo = center / OCTAVE_FACTOR;
-        const hi = Math.min(center * OCTAVE_FACTOR, nyquist);
-        if (lo >= nyquist || hi <= lo) return;
-        const i0 = Math.max(1, Math.ceil(lo / binHz));
-        const i1 = Math.min(spectrum.length - 1, Math.floor(hi / binHz));
-        if (i1 < i0) return;
-        let power = 0;
-        for (let i = i0; i <= i1; i += 1) {
-          const db = spectrum[i];
-          if (!Number.isFinite(db) || db < -139.9) continue;
-          power += Math.pow(10, db / 10);
-        }
-        if (power > 0) {
+        coverage[center] = block.coverage?.[center] === true;
+        const power = block.octavePowersZ?.[center];
+        if (Number.isFinite(power) && power > 0) {
           bandPowerSum[center] += power;
           bandFrames[center] += 1;
         }
       });
-    });
+    }, (elapsed, total) => {
+      if (progressEl) progressEl.textContent = `Měřím… ${Math.ceil(elapsed)} / ${total} s`;
+    }, captureLabel);
 
     const overallPower = sumSquares / Math.max(1, sampleCount);
     const bandPowers = emptyBandMap(0);
