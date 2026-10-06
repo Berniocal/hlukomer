@@ -2,6 +2,8 @@
   'use strict';
 
   const $ = id => document.getElementById(id);
+  const MATH = window.HLUKOMER_MATH;
+  if (!MATH) throw new Error('Chybí acoustic-math.js');
   const TYPES = ['A', 'C', 'Z'];
   const OCTAVES = [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
   const OCTAVE_FACTOR = Math.SQRT2;
@@ -342,34 +344,11 @@
   }
 
   function weightDb(freq, type) {
-    if (!(freq > 0)) return -120;
-    if (type === 'Z') return 0;
-    const f2 = freq * freq;
-    const c12200 = 12200 * 12200;
-    if (type === 'C') {
-      const rc = (c12200 * f2) / ((f2 + 20.6 * 20.6) * (f2 + c12200));
-      return 20 * Math.log10(Math.max(rc, 1e-20)) + 0.06;
-    }
-    const num = c12200 * f2 * f2;
-    const den = (f2 + 20.6 * 20.6)
-      * Math.sqrt((f2 + 107.7 * 107.7) * (f2 + 737.9 * 737.9))
-      * (f2 + c12200);
-    return 20 * Math.log10(Math.max(num / den, 1e-20)) + 2.0;
+    return MATH.weightDb(freq, type);
   }
 
   function calibrationDb(freq) {
-    if (!(freq > 0)) return 0;
-    if (freq <= OCTAVES[0]) return measurementCalibration[OCTAVES[0]] || 0;
-    if (freq >= OCTAVES[OCTAVES.length - 1]) return measurementCalibration[OCTAVES[OCTAVES.length - 1]] || 0;
-    const lf = Math.log(freq);
-    for (let i = 0; i < OCTAVES.length - 1; i++) {
-      const f1 = OCTAVES[i], f2 = OCTAVES[i + 1];
-      if (freq >= f1 && freq <= f2) {
-        const t = (lf - Math.log(f1)) / (Math.log(f2) - Math.log(f1));
-        return (measurementCalibration[f1] || 0) + ((measurementCalibration[f2] || 0) - (measurementCalibration[f1] || 0)) * t;
-      }
-    }
-    return 0;
+    return MATH.calibrationDb(freq, measurementCalibration, OCTAVES);
   }
 
   function currentSnapshot() {
@@ -404,7 +383,7 @@
       adjusted.Z += pZ;
 
       for (const center of OCTAVES) {
-        if (freq >= center / OCTAVE_FACTOR && freq < center * OCTAVE_FACTOR) {
+        if (MATH.isFrequencyInOctave(freq, center)) {
           bandsA[center] += pA;
           bandsZ[center] += pZ;
           break;
@@ -535,11 +514,11 @@
         duration += overlap;
       }
     }
-    return duration > 0 && energy > 0 ? 10 * Math.log10(energy / duration) : NaN;
+    return MATH.leqFromEnergy(energy, duration);
   }
 
   function totalLeq(type) {
-    return integratedMs > 0 && totalEnergy[type] > 0 ? 10 * Math.log10(totalEnergy[type] / integratedMs) : NaN;
+    return MATH.leqFromEnergy(totalEnergy[type], integratedMs);
   }
 
   function renderLeq() {
