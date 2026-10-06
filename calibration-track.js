@@ -2,15 +2,19 @@
   'use strict';
 
   const TRACK = {
-    id: 'bernio-calibration-track-v1',
-    wav: 'calibration/bernio_kalibrace_v1.wav',
-    mp3: 'calibration/bernio_kalibrace_v1.mp3',
-    durationSec: 150,
+    id: 'bernio-calibration-track-v2',
+    version: 2,
+    wav: 'calibration/bernio_kalibrace_v2.wav',
+    mp3: 'calibration/bernio_kalibrace_v2.mp3',
+    durationSec: 215,
     chirpTimesSec: [5, 8, 11],
-    backgroundBefore: [14, 44],
-    pink: [45, 105],
-    backgroundAfter: [105, 115],
-    white: [115, 145]
+    linearityLow: [20, 35],
+    linearityHigh: [40, 55],
+    linearityExpectedDifferenceDb: 10,
+    backgroundBefore: [60, 90],
+    pink: [90, 150],
+    backgroundAfter: [150, 180],
+    white: [180, 210]
   };
 
   const ROOM_KEY = 'hlukomer.roomAcousticsTest.v1';
@@ -23,10 +27,14 @@
   const $ = id => document.getElementById(id);
 
   const state = {
+    trackFormat: 'wav',
     backgroundBefore: null,
     pink: null,
     backgroundAfter: null,
     white: null,
+    linearityLow: null,
+    linearityHigh: null,
+    linearity: null,
     backgroundDbfs: null,
     pinkDbfs: null,
     whiteDbfs: null,
@@ -449,6 +457,8 @@
     return {
       calibrationEngineVersion: ENGINE_VERSION,
       referenceTrackId: TRACK.id,
+      referenceTrackFormat: state.trackFormat,
+      referenceTrackFile: state.trackFormat === 'mp3' ? TRACK.mp3 : TRACK.wav,
       referenceProfileId: getReferenceProfile()?.id || null,
       referenceProfileVersion: getReferenceProfile()?.profileVersion ?? null,
       browser: latest?.browser || {
