@@ -1,9 +1,9 @@
 /* Připravené profily pro budoucí kalibraci podle referenčního zdroje. */
-window.HLUKOMER_CALIBRATION_ENGINE_VERSION = '2.0.0';
+window.HLUKOMER_CALIBRATION_ENGINE_VERSION = '2.1.0';
 window.HLUKOMER_CALIBRATION_PROFILES = [
   {
     id: 'tg113a',
-    profileVersion: 1,
+    profileVersion: 2,
     name: 'T&G TG-113A',
     productCode: 'T615A',
     status: 'waiting-for-reference-values',
