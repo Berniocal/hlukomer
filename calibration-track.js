@@ -7,22 +7,61 @@
     mp3: 'calibration/bernio_kalibrace_v1.mp3',
     durationSec: 150,
     chirpTimesSec: [5, 8, 11],
-    background: [14, 44],
+    backgroundBefore: [14, 44],
     pink: [45, 105],
+    backgroundAfter: [105, 115],
     white: [115, 145]
   };
 
   const ROOM_KEY = 'hlukomer.roomAcousticsTest.v1';
+  const QUALITY_KEY = 'hlukomer.calibrationQuality.v1';
+  const OCTAVE_FACTOR = Math.SQRT2;
+  const DEFAULT_CAL_BANDS = [125, 250, 500, 1000, 2000, 4000, 8000, 16000];
   const $ = id => document.getElementById(id);
 
   const state = {
+    backgroundBefore: null,
+    pink: null,
+    backgroundAfter: null,
+    white: null,
     backgroundDbfs: null,
     pinkDbfs: null,
     whiteDbfs: null,
     room: null,
+    quality: null,
     step: 0,
     busy: false
   };
+
+  function calibrationBands() {
+    const configured = (window.HLUKOMER_CALIBRATION_PROFILES || [])[0]?.recommendedOctavesHz;
+    const bands = Array.isArray(configured) ? configured.map(Number).filter(Number.isFinite) : [];
+    return bands.length ? bands : DEFAULT_CAL_BANDS;
+  }
+
+  function emptyBandMap(value = 0) {
+    return Object.fromEntries(calibrationBands().map(center => [center, value]));
+  }
+
+  function formatBand(center) {
+    if (center >= 1000) return `${Number(center / 1000).toLocaleString('cs-CZ')} kHz`;
+    return `${center} Hz`;
+  }
+
+  function powerToDb(power) {
+    return power > 0 ? 10 * Math.log10(power) : -Infinity;
+  }
+
+  function signalToNoiseSnr(totalPower, backgroundPower) {
+    if (!(totalPower > 0) || !(backgroundPower > 0) || totalPower <= backgroundPower) return -Infinity;
+    return 10 * Math.log10((totalPower - backgroundPower) / backgroundPower);
+  }
+
+  function classifySnr(snr) {
+    if (snr >= 20) return { level: 'good', label: 'vhodné' };
+    if (snr >= 15) return { level: 'warn', label: 'hraniční' };
+    return { level: 'bad', label: 'nepoužít' };
+  }
 
   function median(values) {
     const arr = values.filter(Number.isFinite).slice().sort((a, b) => a - b);
@@ -230,6 +269,14 @@
       .calProgress{font-size:13px;color:var(--accent);font-weight:800;min-height:20px}
       .calWizardNav{display:grid;grid-template-columns:1fr 1fr;gap:8px}
       .calWizardNav button:only-child{grid-column:1/-1}
+      .calBandTable{display:grid;gap:5px}
+      .calBandRow{display:grid;grid-template-columns:minmax(70px,1fr) auto auto;align-items:center;gap:8px;background:var(--card2);border-radius:10px;padding:8px 10px;text-align:left}
+      .calBandRow span{font-size:12px;color:var(--muted)}
+      .calBandRow strong{font-size:12px;font-variant-numeric:tabular-nums}
+      .calBandTag{font-size:10px;font-weight:850;border-radius:999px;padding:3px 7px;border:1px solid var(--line)}
+      .calBandTag.good{background:#123329;border-color:#245f49;color:#b8f3d5}
+      .calBandTag.warn{background:#3a3015;border-color:#756020;color:#f8e7a1}
+      .calBandTag.bad{background:#3a2029;border-color:#743645;color:#ffd2d9}
       body.calScreenOpen{overflow:hidden}
       @media(max-width:560px){
         .calScreenBody{padding:14px 12px 28px}
@@ -283,7 +330,7 @@
         </div>
         <div class="calGuideSection">
           <h3>Co je v nahrávce</h3>
-          <p><strong>0:05–0:11</strong> · tři krátké chirpy pro test místnosti<br><strong>0:14–0:44</strong> · ticho pro hluk pozadí<br><strong>0:45–1:45</strong> · růžový šum pro kalibraci<br><strong>1:55–2:25</strong> · bílý šum pro kontrolu</p>
+          <p><strong>0:05–0:11</strong> · tři krátké chirpy pro test místnosti<br><strong>0:14–0:44</strong> · ticho pro první měření pozadí<br><strong>0:45–1:45</strong> · růžový šum pro kalibraci<br><strong>1:45–1:55</strong> · ticho pro druhé měření pozadí<br><strong>1:55–2:25</strong> · bílý šum pro kontrolu</p>
         </div>
         <div class="calGuideSection">
           <h3>Pak už jen postupujte podle telefonu</h3>
@@ -352,7 +399,7 @@
     return Boolean((transportStop && !transportStop.disabled) || (nativeStop && !nativeStop.disabled));
   }
 
-  async function withMicrophone(durationSec, onChunk, onProgress) {
+  async function withMicrophone(durationSec, onChunk, onProgress, onSpectrum) {
     if (!navigator.mediaDevices?.getUserMedia) throw new Error('Tento prohlížeč neumí použít mikrofon.');
     if (isRegularMeasurementRunning()) throw new Error('Nejdřív ukončete běžné měření hluku.');
 
@@ -360,6 +407,8 @@
     let context = null;
     let source = null;
     let processor = null;
+    let analyser = null;
+    let spectrumData = null;
     let silentGain = null;
     let timer = null;
     let progressTimer = null;
@@ -397,16 +446,28 @@
       await context.resume();
       source = context.createMediaStreamSource(stream);
       processor = context.createScriptProcessor(1024, 1, 1);
+      analyser = context.createAnalyser();
+      analyser.fftSize = 4096;
+      analyser.smoothingTimeConstant = 0;
+      analyser.minDecibels = -140;
+      analyser.maxDecibels = 0;
+      spectrumData = new Float32Array(analyser.frequencyBinCount);
       silentGain = context.createGain();
       silentGain.gain.value = 0;
 
       processor.onaudioprocess = event => {
         const input = event.inputBuffer.getChannelData(0);
         onChunk?.(new Float32Array(input), context.sampleRate);
+        if (onSpectrum) {
+          analyser.getFloatFrequencyData(spectrumData);
+          onSpectrum(new Float32Array(spectrumData), context.sampleRate, analyser.fftSize);
+        }
       };
 
       source.connect(processor);
+      source.connect(analyser);
       processor.connect(silentGain);
+      analyser.connect(silentGain);
       silentGain.connect(context.destination);
 
       const started = performance.now();
@@ -426,6 +487,7 @@
       if (processor) processor.onaudioprocess = null;
       try { source?.disconnect(); } catch (_) {}
       try { processor?.disconnect(); } catch (_) {}
+      try { analyser?.disconnect(); } catch (_) {}
       try { silentGain?.disconnect(); } catch (_) {}
       stream?.getTracks().forEach(track => track.stop());
       if (context && context.state !== 'closed') {
@@ -434,19 +496,103 @@
     }
   }
 
-  async function captureLevel(durationSec, progressEl) {
-    let sum = 0;
-    let count = 0;
+  async function captureAcousticSample(durationSec, progressEl) {
+    let sumSquares = 0;
+    let sampleCount = 0;
+    const bandPowerSum = emptyBandMap(0);
+    const bandFrames = emptyBandMap(0);
+
     await withMicrophone(durationSec, chunk => {
       for (let i = 0; i < chunk.length; i += 1) {
-        sum += chunk[i] * chunk[i];
-        count += 1;
+        sumSquares += chunk[i] * chunk[i];
+        sampleCount += 1;
       }
     }, (elapsed, total) => {
       if (progressEl) progressEl.textContent = `Měřím… ${Math.ceil(elapsed)} / ${total} s`;
+    }, (spectrum, sampleRate, fftSize) => {
+      const binHz = sampleRate / fftSize;
+      const nyquist = sampleRate / 2;
+      calibrationBands().forEach(center => {
+        const lo = center / OCTAVE_FACTOR;
+        const hi = Math.min(center * OCTAVE_FACTOR, nyquist);
+        if (lo >= nyquist || hi <= lo) return;
+        const i0 = Math.max(1, Math.ceil(lo / binHz));
+        const i1 = Math.min(spectrum.length - 1, Math.floor(hi / binHz));
+        if (i1 < i0) return;
+        let power = 0;
+        for (let i = i0; i <= i1; i += 1) {
+          const db = spectrum[i];
+          if (!Number.isFinite(db) || db < -139.9) continue;
+          power += Math.pow(10, db / 10);
+        }
+        if (power > 0) {
+          bandPowerSum[center] += power;
+          bandFrames[center] += 1;
+        }
+      });
     });
-    const value = Math.sqrt(sum / Math.max(1, count));
-    return 20 * Math.log10(Math.max(value, 1e-12));
+
+    const overallPower = sumSquares / Math.max(1, sampleCount);
+    const bandPowers = emptyBandMap(0);
+    const bandDb = emptyBandMap(-Infinity);
+    calibrationBands().forEach(center => {
+      const frames = bandFrames[center] || 0;
+      const power = frames > 0 ? bandPowerSum[center] / frames : 0;
+      bandPowers[center] = power;
+      bandDb[center] = powerToDb(power);
+    });
+
+    return {
+      overallPower,
+      dbfs: powerToDb(overallPower),
+      bandPowers,
+      bandDb
+    };
+  }
+
+  async function captureLevel(durationSec, progressEl) {
+    const sample = await captureAcousticSample(durationSec, progressEl);
+    return sample.dbfs;
+  }
+
+  function evaluateCalibrationQuality() {
+    if (!state.backgroundBefore || !state.pink || !state.backgroundAfter) return null;
+
+    const backgroundPower = Math.max(state.backgroundBefore.overallPower, state.backgroundAfter.overallPower);
+    const overallSnrDb = signalToNoiseSnr(state.pink.overallPower, backgroundPower);
+    const backgroundChangeDb = Math.abs(state.backgroundAfter.dbfs - state.backgroundBefore.dbfs);
+    const bands = {};
+    const usableBands = [];
+
+    calibrationBands().forEach(center => {
+      const before = state.backgroundBefore.bandPowers?.[center] || 0;
+      const after = state.backgroundAfter.bandPowers?.[center] || 0;
+      const bg = Math.max(before, after);
+      const total = state.pink.bandPowers?.[center] || 0;
+      const snrDb = signalToNoiseSnr(total, bg);
+      const classification = classifySnr(snrDb);
+      bands[center] = {
+        snrDb: Number.isFinite(snrDb) ? Number(snrDb.toFixed(2)) : null,
+        level: classification.level,
+        usable: snrDb >= 15
+      };
+      if (snrDb >= 15) usableBands.push(center);
+    });
+
+    const quality = {
+      measuredAt: new Date().toISOString(),
+      referenceTrack: TRACK.id,
+      backgroundBeforeDbfs: Number(state.backgroundBefore.dbfs.toFixed(2)),
+      backgroundAfterDbfs: Number(state.backgroundAfter.dbfs.toFixed(2)),
+      backgroundChangeDb: Number(backgroundChangeDb.toFixed(2)),
+      overallSnrDb: Number.isFinite(overallSnrDb) ? Number(overallSnrDb.toFixed(2)) : null,
+      thresholdsDb: { good: 20, minimum: 15 },
+      bands,
+      usableBands
+    };
+    state.quality = quality;
+    localStorage.setItem(QUALITY_KEY, JSON.stringify(quality));
+    return quality;
   }
 
   async function runRoomTest(progressEl) {
@@ -553,41 +699,60 @@
     },
     {
       icon: '🤫',
-      title: 'Hluk pozadí',
-      text: 'Nahrávka je teď tichá. Stiskněte tlačítko a během měření v místnosti nic nedělejte.',
+      title: 'Pozadí před kalibrací',
+      text: 'Nahrávka je teď tichá. Změřte hluk pozadí ještě před růžovým šumem.',
       action: 'Změřit pozadí',
       run: async progressEl => {
-        state.backgroundDbfs = await captureLevel(5, progressEl);
-        return state.backgroundDbfs;
+        state.backgroundBefore = await captureAcousticSample(5, progressEl);
+        state.backgroundDbfs = state.backgroundBefore.dbfs;
+        return state.backgroundBefore;
       }
     },
     {
       icon: '🌸',
       title: 'Růžový šum',
-      text: 'Počkejte, až začne růžový šum. Jakmile ho uslyšíte, spusťte kalibraci.',
-      action: 'Spustit kalibraci',
+      text: 'Počkejte, až začne růžový šum. Jakmile ho uslyšíte, spusťte měření kalibračního signálu.',
+      action: 'Změřit růžový šum',
       run: async progressEl => {
-        state.pinkDbfs = await captureLevel(25, progressEl);
-        return state.pinkDbfs;
+        state.pink = await captureAcousticSample(25, progressEl);
+        state.pinkDbfs = state.pink.dbfs;
+        return state.pink;
+      }
+    },
+    {
+      icon: '🤫',
+      title: 'Pozadí po kalibraci',
+      text: 'Jakmile růžový šum přestane, je 10 s ticha. Hned spusťte druhé měření pozadí.',
+      action: 'Změřit pozadí po',
+      run: async progressEl => {
+        state.backgroundAfter = await captureAcousticSample(5, progressEl);
+        evaluateCalibrationQuality();
+        return state.backgroundAfter;
       }
     },
     {
       icon: '✓',
       title: 'Kontrola bílým šumem',
-      text: 'Počkejte, až růžový šum skončí a začne nový bílý šum. Potom spusťte kontrolu.',
+      text: 'Počkejte, až začne bílý šum. Potom spusťte kontrolu.',
       action: 'Spustit kontrolu',
       run: async progressEl => {
-        state.whiteDbfs = await captureLevel(15, progressEl);
-        return state.whiteDbfs;
+        state.white = await captureAcousticSample(15, progressEl);
+        state.whiteDbfs = state.white.dbfs;
+        return state.white;
       }
     }
   ];
 
   function resetWizard() {
+    state.backgroundBefore = null;
+    state.pink = null;
+    state.backgroundAfter = null;
+    state.white = null;
     state.backgroundDbfs = null;
     state.pinkDbfs = null;
     state.whiteDbfs = null;
     state.room = null;
+    state.quality = null;
     state.step = 0;
     state.busy = false;
     renderWizard();
@@ -609,27 +774,51 @@
         </div>`;
     }
 
-    if (stepIndex === 2 && Number.isFinite(state.backgroundDbfs)) {
-      return `<div class="calStatus good">Hluk pozadí změřen ✓</div>`;
+    if (stepIndex === 2 && state.backgroundBefore) {
+      return '<div class="calStatus good">První měření pozadí hotové ✓</div>';
     }
 
-    if (stepIndex === 3 && Number.isFinite(state.pinkDbfs)) {
-      const delta = Number.isFinite(state.backgroundDbfs) ? state.pinkDbfs - state.backgroundDbfs : null;
-      if (!Number.isFinite(delta)) return `<div class="calStatus warn">Kalibrační signál změřen.</div>`;
-      const level = delta >= 20 ? 'good' : delta >= 15 ? 'warn' : 'bad';
-      const text = delta >= 20
-        ? 'Podmínky jsou vhodné.'
-        : delta >= 15
-          ? 'Rozdíl je menší než ideální. Kalibrace může být méně přesná.'
-          : 'Signál je příliš blízko hluku pozadí. Zkuste tišší místnost.';
+    if (stepIndex === 3 && state.pink) {
+      return '<div class="calStatus good">Růžový šum změřen ✓<br>Počkejte, až přestane, a změřte druhé pozadí.</div>';
+    }
+
+    if (stepIndex === 4 && state.backgroundAfter && state.quality) {
+      const q = state.quality;
+      const overallSnr = Number(q.overallSnrDb);
+      const overallClass = classifySnr(overallSnr);
+      const stable = q.backgroundChangeDb <= 3;
+      const rows = calibrationBands().map(center => {
+        const item = q.bands?.[center] || {};
+        const snr = Number(item.snrDb);
+        const cls = classifySnr(snr);
+        return `<div class="calBandRow">
+          <span>${formatBand(center)}</span>
+          <strong>${Number.isFinite(snr) ? snr.toFixed(1) + ' dB' : '—'}</strong>
+          <span class="calBandTag ${cls.level}">${cls.label}</span>
+        </div>`;
+      }).join('');
+
+      const usable = q.usableBands?.length || 0;
+      const total = calibrationBands().length;
+      const statusLevel = overallSnr < 15 ? 'bad' : stable ? (usable === total ? 'good' : 'warn') : 'warn';
+      const statusText = overallSnr < 15
+        ? 'Celkový signál je příliš blízko hluku pozadí. Kalibraci zopakujte v tišším prostředí.'
+        : !stable
+          ? 'Hluk pozadí se během kalibrace změnil o více než 3 dB. Výsledek může být méně spolehlivý.'
+          : usable === total
+            ? 'Všechna pásma mají dostatečný odstup od pozadí.'
+            : `${usable} z ${total} pásem lze použít. Pásma pod 15 dB se do frekvenční kalibrace nezahrnou.`;
+
       return `
         <div class="calWizardResult">
-          <div class="calResultRow"><span>Signál nad pozadím</span><strong>${delta.toFixed(1)} dB</strong></div>
-          <div class="calStatus ${level}">${text}</div>
+          <div class="calResultRow"><span>Celkový SNR</span><strong>${Number.isFinite(overallSnr) ? overallSnr.toFixed(1) + ' dB' : '—'}</strong></div>
+          <div class="calResultRow"><span>Změna pozadí před / po</span><strong>${q.backgroundChangeDb.toFixed(1)} dB</strong></div>
+          <div class="calBandTable">${rows}</div>
+          <div class="calStatus ${statusLevel}">${statusText}</div>
         </div>`;
     }
 
-    if (stepIndex === 4 && Number.isFinite(state.whiteDbfs)) {
+    if (stepIndex === 5 && state.white) {
       const error = validationErrorDb();
       if (Number.isFinite(error)) {
         const abs = Math.abs(error);
@@ -640,15 +829,15 @@
             <div class="calStatus ${level}">${abs <= 1 ? 'Kalibrace vyšla velmi dobře.' : abs <= 2 ? 'Kalibrace je použitelná.' : 'Odchylka je příliš velká. Doporučujeme kalibraci zopakovat.'}</div>
           </div>`;
       }
-      return `<div class="calStatus warn">Kontrolní šum změřen. Přesnost půjde vyčíslit po doplnění referenčních hodnot tohoto reproduktoru.</div>`;
+      return '<div class="calStatus warn">Kontrolní šum změřen. Přesnost půjde vyčíslit po doplnění referenčních hodnot tohoto reproduktoru.</div>';
     }
     return '';
   }
 
   function stepMayContinue(stepIndex) {
     if (stepIndex === 1 && state.room) return classifyRoom(state.room.rt60Sec, state.room.earlyReflectionDb).overall !== 'bad';
-    if (stepIndex === 3 && Number.isFinite(state.pinkDbfs) && Number.isFinite(state.backgroundDbfs)) {
-      return state.pinkDbfs - state.backgroundDbfs >= 15;
+    if (stepIndex === 4 && state.quality) {
+      return Number(state.quality.overallSnrDb) >= 15 && (state.quality.usableBands?.length || 0) > 0;
     }
     return true;
   }
@@ -656,9 +845,10 @@
   function stepDone(stepIndex) {
     if (stepIndex === 0) return state.step > 0;
     if (stepIndex === 1) return Boolean(state.room);
-    if (stepIndex === 2) return Number.isFinite(state.backgroundDbfs);
-    if (stepIndex === 3) return Number.isFinite(state.pinkDbfs);
-    if (stepIndex === 4) return Number.isFinite(state.whiteDbfs);
+    if (stepIndex === 2) return Boolean(state.backgroundBefore);
+    if (stepIndex === 3) return Boolean(state.pink);
+    if (stepIndex === 4) return Boolean(state.backgroundAfter && state.quality);
+    if (stepIndex === 5) return Boolean(state.white);
     return false;
   }
 
@@ -696,7 +886,10 @@
     });
     $('calWizardRetry')?.addEventListener('click', () => {
       if (state.step === 1) state.room = null;
-      if (state.step === 3) state.pinkDbfs = null;
+      if (state.step === 4) {
+        state.backgroundAfter = null;
+        state.quality = null;
+      }
       renderWizard();
     });
     $('calWizardFinish')?.addEventListener('click', () => closeScreen('calWizardScreen'));
