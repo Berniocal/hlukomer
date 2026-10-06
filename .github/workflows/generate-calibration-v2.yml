@@ -2,15 +2,12 @@ name: Generate calibration track v2
 
 on:
   workflow_dispatch:
-  issues:
-    types: [opened]
 
 permissions:
   contents: write
 
 jobs:
   generate:
-    if: github.event_name == 'workflow_dispatch' || github.event.issue.title == '[automation] Generate calibration v2'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
