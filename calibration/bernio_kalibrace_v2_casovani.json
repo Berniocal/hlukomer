@@ -47,23 +47,23 @@
     },
     {
       "from": 20,
-      "to": 35,
+      "to": 45,
+      "content": "ticho",
+      "purpose": "pozadí před kalibrací a korekce testu linearity"
+    },
+    {
+      "from": 50,
+      "to": 65,
       "content": "růžový šum - slabší",
       "rmsDbfs": -24.0,
       "purpose": "test linearity"
     },
     {
-      "from": 40,
-      "to": 55,
+      "from": 70,
+      "to": 85,
       "content": "tentýž růžový šum - hlasitější",
       "rmsDbfs": -14.0,
       "purpose": "test linearity"
-    },
-    {
-      "from": 60,
-      "to": 90,
-      "content": "ticho",
-      "purpose": "pozadí před kalibrací"
     },
     {
       "from": 90,
@@ -94,17 +94,17 @@
   "notes": [
     "WAV je jediný plnohodnotný referenční formát pro budoucí automatickou kalibraci.",
     "MP3 je pouze nouzová varianta a musí mít vlastní referenční data, pokud má být někdy používán jako reference.",
-    "Test linearity porovnává tentýž růžový šum se známým rozdílem přesně 10,0 dB.",
+    "Test linearity porovnává tentýž růžový šum se známým rozdílem přesně 10,0 dB a používá energeticky odečtené pozadí.",
     "Stopa se při generování globálně nenormalizuje; překročení bezpečného peaku generování zastaví."
   ],
   "files": {
     "wav": {
       "name": "bernio_kalibrace_v2.wav",
-      "sha256": "050956ef3dc7c515e7d410e1bf63f85eecd531dd48451d716566dc668adf15b2"
+      "sha256": "16e50f9e7a2eeef7770605b5db8da341760eabf330223f730d9725ab66d6d791"
     },
     "mp3": {
       "name": "bernio_kalibrace_v2.mp3",
-      "sha256": "287a7e16b832e1817632f1f12dd8fbdf34db2b7428c3c9ffecda9eca8037081b"
+      "sha256": "923c6b0c7aa875f536abf02c14136d9a39d26651cf97dc1c336e07cc73b2bc78"
     }
   }
 }
