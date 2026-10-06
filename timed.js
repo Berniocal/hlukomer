@@ -54,6 +54,7 @@
   let capturedSerial = 0;
   let lastIntegratedSerial = 0;
   let captureEnabled = false;
+  let continuousCapture = window.HLUKOMER_CONTINUOUS_CAPTURE === true;
 
   let sessionActive = false;
   let paused = false;
@@ -74,11 +75,24 @@
   let measurementOffset = 40;
   let measurementCalibration = {};
   let measurementCalibrated = false;
+  let measurementBandCoverage = octaveMap(null);
   let targetSeconds = 5;
   let sampleTimer = 0;
 
   const ui = buildUi();
   patchAnalyserCapture();
+
+  window.addEventListener('hlukomer-capture-mode', event => {
+    continuousCapture = Boolean(event.detail?.continuous);
+  });
+
+  window.addEventListener('hlukomer-audio-block', event => {
+    if (!continuousCapture || !captureEnabled || !sessionActive || paused || finishing) return;
+    const samples = event.detail?.samples;
+    const sampleRate = Number(event.detail?.sampleRate);
+    if (!(samples instanceof Float32Array) || !(sampleRate > 0)) return;
+    integrateContinuousBlock(samples, sampleRate);
+  });
 
   timedMode.checked = localStorage.getItem(LS.mode) === '1';
   timedSeconds.value = clampSeconds(Number(localStorage.getItem(LS.seconds)) || 5);
@@ -216,8 +230,8 @@
             capturedSampleRate = context.sampleRate || 0;
             capturedFftSize = node.fftSize || array.length * 2;
             capturedSerial += 1;
-            // Integrujeme při každém čerstvém FFT rámci místo starého 80ms časovače.
-            sampleMeasurement(performance.now(), capturedSerial);
+            // Záloha pro prohlížeče bez AudioWorkletu.
+            if (!continuousCapture) sampleMeasurement(performance.now(), capturedSerial);
           }
         };
         return node;
@@ -360,6 +374,10 @@
     const rawDbfs = 20 * Math.log10(Math.max(rms, 1e-9));
     const binHz = capturedSampleRate / capturedFftSize;
     const maxHz = Math.min(20000, capturedSampleRate / 2);
+    const coverage = Object.fromEntries(OCTAVES.map(center => [
+      center,
+      MATH.octaveFullyCovered(center, capturedSampleRate, 20000)
+    ]));
 
     let rawPower = 0;
     const adjusted = typeMap(0);
@@ -383,6 +401,7 @@
       adjusted.Z += pZ;
 
       for (const center of OCTAVES) {
+        if (!coverage[center]) continue;
         if (MATH.isFrequencyInOctave(freq, center)) {
           bandsA[center] += pA;
           bandsZ[center] += pZ;
@@ -414,7 +433,37 @@
       }
     });
 
-    return { powers, octavePowersA, octavePowersZ };
+    return { powers, octavePowersA, octavePowersZ, coverage };
+  }
+
+  function integrateContinuousBlock(samples, sampleRate) {
+    if (!sessionActive || paused || finishing || !captureEnabled) return;
+
+    const snapshot = MATH.analyzeTimeBlock(samples, sampleRate, {
+      centers: OCTAVES,
+      calibration: measurementCalibration,
+      analysisMaxHz: 20000,
+      offsetDb: measurementSpl ? measurementOffset : 0
+    });
+    if (!snapshot) return;
+
+    let dt = snapshot.durationMs;
+    if (timedMode.checked) {
+      const remaining = targetSeconds * 1000 - integratedMs;
+      if (remaining <= 0) {
+        finishMeasurement(true);
+        return;
+      }
+      dt = Math.min(dt, remaining);
+    }
+
+    integrateSnapshot(snapshot, dt);
+    renderLeq();
+    updateCountdown();
+
+    if (timedMode.checked && integratedMs >= targetSeconds * 1000 - 0.5) {
+      finishMeasurement(true);
+    }
   }
 
   function beginSession() {
@@ -435,6 +484,9 @@
     capturedFftSize = 0;
     lastIntegratedSerial = capturedSerial;
     lastIntegrationPerf = performance.now();
+    continuousCapture = window.HLUKOMER_CONTINUOUS_CAPTURE === true;
+    measurementBandCoverage = octaveMap(null);
+    try { window.hlukomerResetContinuousCapture?.(); } catch (_) {}
 
     measurementWeighting = weighting?.value || 'A';
     measurementSpl = !!showSPL?.checked;
@@ -454,6 +506,8 @@
   function integrateSnapshot(snapshot, dt) {
     TYPES.forEach(type => { totalEnergy[type] += snapshot.powers[type] * dt; });
     OCTAVES.forEach(center => {
+      if (typeof snapshot.coverage?.[center] === 'boolean') measurementBandCoverage[center] = snapshot.coverage[center];
+      if (snapshot.coverage?.[center] === false) return;
       octaveEnergyA[center] += (snapshot.octavePowersA[center] || 0) * dt;
       octaveEnergyZ[center] += (snapshot.octavePowersZ[center] || 0) * dt;
     });
@@ -474,6 +528,7 @@
   }
 
   function sampleMeasurement(now = performance.now(), serial = capturedSerial) {
+    if (continuousCapture) return;
     if (!sessionActive || paused || finishing) return;
     if (serial === lastIntegratedSerial) return;
     let dt = now - lastIntegrationPerf;
@@ -551,9 +606,10 @@
 
   function pauseMeasurement() {
     if (!sessionActive || paused || finishing) return;
-    sampleMeasurement();
+    if (!continuousCapture) sampleMeasurement();
     paused = true;
     captureEnabled = false;
+    try { window.hlukomerResetContinuousCapture?.(); } catch (_) {}
     setTransportState('paused');
     statusPill.textContent = 'pozastaveno';
     updateCountdown();
@@ -563,12 +619,14 @@
     if (!sessionActive || !paused || finishing) return;
     paused = false;
     captureEnabled = true;
+    try { window.hlukomerResetContinuousCapture?.(); } catch (_) {}
     lastIntegrationPerf = performance.now();
     setTransportState('running');
     statusPill.textContent = 'měřím';
   }
 
   function sampleMeasurementFinal() {
+    if (continuousCapture) return;
     if (capturedSerial === lastIntegratedSerial) return;
     const now = performance.now();
     let dt = Math.min(Math.max(0, now - lastIntegrationPerf), MAX_FRAME_DT_MS);
@@ -621,8 +679,13 @@
     const octavesA = {};
     const octavesZ = {};
     OCTAVES.forEach(center => {
-      octavesA[center] = octaveEnergyA[center] > 0 ? Number((10 * Math.log10(octaveEnergyA[center] / integratedMs)).toFixed(2)) : null;
-      octavesZ[center] = octaveEnergyZ[center] > 0 ? Number((10 * Math.log10(octaveEnergyZ[center] / integratedMs)).toFixed(2)) : null;
+      if (measurementBandCoverage[center] === false) {
+        octavesA[center] = null;
+        octavesZ[center] = null;
+        return;
+      }
+      octavesA[center] = octaveEnergyA[center] > 0 ? Number(MATH.powerToDb(octaveEnergyA[center] / integratedMs).toFixed(2)) : null;
+      octavesZ[center] = octaveEnergyZ[center] > 0 ? Number(MATH.powerToDb(octaveEnergyZ[center] / integratedMs).toFixed(2)) : null;
     });
 
     return normalizeResult({
