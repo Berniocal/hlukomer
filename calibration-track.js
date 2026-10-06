@@ -1393,11 +1393,11 @@
     });
     $('calWizardRetry')?.addEventListener('click', () => {
       if (state.step === 1) state.room = null;
-      if (state.step === 3) {
+      if (state.step === 4) {
         state.linearityLow = null;
         state.linearityHigh = null;
         state.linearity = null;
-        state.step = 2;
+        state.step = 3;
       } else if (state.step === 6) {
         state.backgroundAfter = null;
         state.quality = null;
