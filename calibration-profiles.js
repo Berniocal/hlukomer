@@ -120,6 +120,12 @@ function hlukomerDownloadCalibration(profileName) {
     calibrationQuality: (() => {
       try { return JSON.parse(localStorage.getItem(HLUKOMER_CAL_QUALITY_KEY) || 'null'); }
       catch (_) { return null; }
+    })(),
+    technicalMetadata: (() => {
+      try {
+        const quality = JSON.parse(localStorage.getItem(HLUKOMER_CAL_QUALITY_KEY) || 'null');
+        return quality?.technicalMetadata || null;
+      } catch (_) { return null; }
     })()
   };
   const json = JSON.stringify(data, null, 2);
@@ -159,7 +165,8 @@ function hlukomerNormalizeImportedCalibration(data) {
     roomAcoustics: data.roomAcoustics && typeof data.roomAcoustics === 'object' && !Array.isArray(data.roomAcoustics) ? data.roomAcoustics : null,
     calibrationEngineVersion: typeof data.calibrationEngineVersion === 'string' ? data.calibrationEngineVersion : null,
     calibrationCreatedWithEngine: typeof data.calibrationCreatedWithEngine === 'string' ? data.calibrationCreatedWithEngine : null,
-    calibrationQuality: data.calibrationQuality && typeof data.calibrationQuality === 'object' && !Array.isArray(data.calibrationQuality) ? data.calibrationQuality : null
+    calibrationQuality: data.calibrationQuality && typeof data.calibrationQuality === 'object' && !Array.isArray(data.calibrationQuality) ? data.calibrationQuality : null,
+    technicalMetadata: data.technicalMetadata && typeof data.technicalMetadata === 'object' && !Array.isArray(data.technicalMetadata) ? data.technicalMetadata : null
   };
 }
 
