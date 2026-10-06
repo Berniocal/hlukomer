@@ -53,20 +53,6 @@ const HLUKOMER_ROOM_TEST_KEY = 'hlukomer.roomAcousticsTest.v1';
   } catch (_) {}
 })();
 
-/* Ruční SPL kalibrace bez horního limitu 100 dB. */
-(() => {
-  const offsetInput = document.getElementById('offsetNum');
-  if (!offsetInput) return;
-  offsetInput.removeAttribute('max');
-  offsetInput.addEventListener('change', event => {
-    const value = Number(offsetInput.value);
-    if (!Number.isFinite(value) || value <= 100) return;
-    event.stopImmediatePropagation();
-    localStorage.setItem('hlukomer.offsetDB.v2', String(value));
-    offsetInput.value = value.toFixed(1);
-  });
-})();
-
 function hlukomerReadFrequencyCalibration() {
   let raw = {};
   try { raw = JSON.parse(localStorage.getItem('hlukomer.freqCalibration.v2') || '{}'); }
@@ -115,6 +101,7 @@ function hlukomerDownloadCalibration(profileName) {
     name: profileName || 'Kalibrace hlukoměru',
     createdAt: new Date().toISOString(),
     splOffsetDb: Number.isFinite(offset) ? offset : 40,
+    calibrationState: localStorage.getItem('hlukomer.calibrationState.v1') || 'uncalibrated',
     frequencyCalibrationDb: hlukomerReadFrequencyCalibration(),
     referenceSource: hlukomerCurrentReferenceSource(),
     roomAcoustics: hlukomerReadRoomAcoustics()
@@ -167,6 +154,7 @@ function hlukomerImportCalibrationFile(file, nameInput) {
       if (!confirm(`Načíst kalibraci „${imported.name}“?\n\nSoučasná kalibrace bude nahrazena.`)) return;
       localStorage.setItem('hlukomer.offsetDB.v2', String(imported.splOffsetDb));
       localStorage.setItem('hlukomer.freqCalibration.v2', JSON.stringify(imported.frequencyCalibrationDb));
+      localStorage.setItem('hlukomer.calibrationState.v1', 'imported');
       localStorage.setItem(HLUKOMER_CAL_PROFILE_NAME_KEY, imported.name);
       if (imported.referenceSource) localStorage.setItem(HLUKOMER_CAL_REFERENCE_KEY, JSON.stringify(imported.referenceSource));
       else localStorage.removeItem(HLUKOMER_CAL_REFERENCE_KEY);
