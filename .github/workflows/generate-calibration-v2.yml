@@ -1,0 +1,32 @@
+name: Generate calibration track v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "calibration/generate_calibration_track_v2.py"
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install generator dependency
+        run: python -m pip install --disable-pip-version-check numpy
+      - name: Generate WAV, MP3 and timing metadata
+        run: python calibration/generate_calibration_track_v2.py
+      - name: Commit generated reference files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add calibration/bernio_kalibrace_v2.wav calibration/bernio_kalibrace_v2.mp3 calibration/bernio_kalibrace_v2_casovani.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Generate Bernio calibration track v2"
+          git push
