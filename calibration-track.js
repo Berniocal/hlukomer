@@ -584,6 +584,8 @@
   async function captureAcousticSample(durationSec, progressEl, captureLabel = 'level') {
     let sumSquares = 0;
     let sampleCount = 0;
+    let clippedSamples = 0;
+    let peakAbs = 0;
     let measuredSampleRate = 0;
     const bandPowerSum = emptyBandMap(0);
     const bandFrames = emptyBandMap(0);
@@ -592,8 +594,12 @@
     await withMicrophone(durationSec, (chunk, sampleRate) => {
       measuredSampleRate = sampleRate;
       for (let i = 0; i < chunk.length; i += 1) {
-        sumSquares += chunk[i] * chunk[i];
+        const x = chunk[i];
+        sumSquares += x * x;
         sampleCount += 1;
+        const ax = Math.abs(x);
+        peakAbs = Math.max(peakAbs, ax);
+        if (ax >= 0.995) clippedSamples += 1;
       }
 
       const block = MATH.analyzeTimeBlock(chunk, sampleRate, {
@@ -630,6 +636,8 @@
       overallPower,
       dbfs: powerToDb(overallPower),
       sampleRate: measuredSampleRate,
+      peakAbs: Number(peakAbs.toFixed(6)),
+      clippedFraction: sampleCount > 0 ? clippedSamples / sampleCount : 0,
       coverage,
       bandPowers,
       bandDb
@@ -639,6 +647,54 @@
   async function captureLevel(durationSec, progressEl) {
     const sample = await captureAcousticSample(durationSec, progressEl);
     return sample.dbfs;
+  }
+
+  function evaluateLinearity() {
+    if (!state.linearityLow || !state.linearityHigh) return null;
+
+    const expectedDb = TRACK.linearityExpectedDifferenceDb;
+    const measuredDb = state.linearityHigh.dbfs - state.linearityLow.dbfs;
+    const errorDb = measuredDb - expectedDb;
+    const absError = Math.abs(errorDb);
+    const clipping = (state.linearityLow.clippedFraction || 0) > 0.0001
+      || (state.linearityHigh.clippedFraction || 0) > 0.0001
+      || Number(state.linearityHigh.peakAbs) >= 0.995;
+
+    let level = absError <= 1 ? 'good' : absError <= 2 ? 'warn' : 'bad';
+    if (clipping) level = 'bad';
+
+    const bandDifferencesDb = {};
+    standardCalibrationBands().forEach(center => {
+      const low = Number(state.linearityLow.bandDb?.[center]);
+      const high = Number(state.linearityHigh.bandDb?.[center]);
+      bandDifferencesDb[center] = Number.isFinite(low) && Number.isFinite(high)
+        ? Number((high - low).toFixed(2))
+        : null;
+    });
+
+    const result = {
+      measuredAt: new Date().toISOString(),
+      expectedDifferenceDb: expectedDb,
+      measuredDifferenceDb: Number(measuredDb.toFixed(2)),
+      errorDb: Number(errorDb.toFixed(2)),
+      toleranceDb: { good: 1, warning: 2 },
+      clipping,
+      low: {
+        dbfs: Number(state.linearityLow.dbfs.toFixed(2)),
+        peakAbs: state.linearityLow.peakAbs,
+        clippedFraction: state.linearityLow.clippedFraction
+      },
+      high: {
+        dbfs: Number(state.linearityHigh.dbfs.toFixed(2)),
+        peakAbs: state.linearityHigh.peakAbs,
+        clippedFraction: state.linearityHigh.clippedFraction
+      },
+      bandDifferencesDb,
+      level,
+      usable: level !== 'bad'
+    };
+    state.linearity = result;
+    return result;
   }
 
   function evaluateCalibrationQuality() {
