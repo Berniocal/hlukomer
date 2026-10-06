@@ -965,14 +965,16 @@
       && state.technicalCaptures.every(item => item.captureEngine === 'audio-worklet');
     const referenceAvailable = Number.isFinite(white?.overallErrorDb)
       || standard.some(center => Number.isFinite(white?.bands?.[center]?.errorDb));
+    const linearity = state.linearity || q.linearity || null;
+    const wavReference = state.trackFormat === 'wav';
 
     let level = 'good';
     const reasons = [];
 
-    if (room.overall === 'bad' || Number(q.overallSnrDb) < 15 || standardUsable.length === 0) {
+    if (room.overall === 'bad' || Number(q.overallSnrDb) < 15 || standardUsable.length === 0 || linearity?.level === 'bad') {
       level = 'bad';
     }
-    if (!backgroundStable || standardUsable.length < standard.length || !allWorklet) {
+    if (!backgroundStable || standardUsable.length < standard.length || !allWorklet || linearity?.level === 'warn' || !wavReference) {
       if (level !== 'bad') level = 'warn';
     }
     if (!referenceAvailable) {
@@ -987,6 +989,10 @@
       else if (white.warnBands > 0 && level === 'good') level = 'warn';
     }
 
+    if (!linearity) reasons.push('Test linearity nebyl vyhodnocen.');
+    else if (linearity.level === 'bad') reasons.push(`Linearita nevyhověla: naměřeno ${linearity.measuredDifferenceDb.toFixed(1)} dB místo 10,0 dB.`);
+    else if (linearity.level === 'warn') reasons.push(`Linearita je hraniční: naměřeno ${linearity.measuredDifferenceDb.toFixed(1)} dB místo 10,0 dB.`);
+    if (!wavReference) reasons.push('Použita MP3 stopa; referenční variantou je WAV.');
     if (!backgroundStable) reasons.push('Pozadí se během kalibrace změnilo o více než 3 dB.');
     if (standardUsable.length < standard.length) reasons.push(`Použitelných je ${standardUsable.length} z ${standard.length} standardních pásem.`);
     if (!allWorklet) reasons.push('Alespoň jeden krok použil záložní zvukový sběr místo AudioWorkletu.');
@@ -1003,6 +1009,13 @@
       room: room.overall,
       backgroundStable,
       allAudioWorklet: allWorklet,
+      trackFormat: state.trackFormat,
+      linearity: linearity ? {
+        level: linearity.level,
+        measuredDifferenceDb: linearity.measuredDifferenceDb,
+        expectedDifferenceDb: linearity.expectedDifferenceDb,
+        clipping: linearity.clipping
+      } : null,
       referenceValidationAvailable: referenceAvailable,
       reasons
     };
