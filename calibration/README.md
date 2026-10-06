@@ -18,15 +18,15 @@ WAV je jediná varianta určená pro budoucí plnohodnotnou referenční kalibra
 ## Průběh stopy v2
 
 - **0:05, 0:08 a 0:11** – tři krátké chirpy pro screening místnosti
-- **0:20–0:35** – slabší růžový šum pro test linearity
-- **0:40–0:55** – tentýž růžový šum přesně o **10,0 dB** výš
-- **1:00–1:30** – ticho pro pozadí před kalibrací
+- **0:20–0:45** – ticho pro pozadí před kalibrací
+- **0:50–1:05** – slabší růžový šum pro test linearity
+- **1:10–1:25** – tentýž růžový šum přesně o **10,0 dB** výš
 - **1:30–2:30** – hlavní růžový šum
 - **2:30–3:00** – ticho pro pozadí po kalibraci
 - **3:00–3:30** – bílý šum pro nezávislou kontrolu
 - **3:30–3:35** – konečné ticho
 
-Test linearity používá stejný úsek růžového šumu ve dvou úrovních. Digitální rozdíl je přesně **10,0 dB**. Aplikace hodnotí rozdíl přibližně takto:
+Test linearity používá stejný úsek růžového šumu ve dvou úrovních. Digitální rozdíl je přesně **10,0 dB**. Před porovnáním se energeticky odečte naměřené pozadí, aby tichá místnost nezkreslovala hlavně slabší úroveň. Aplikace hodnotí rozdíl přibližně takto:
 
 - odchylka do **±1 dB** – linearita v pořádku
 - odchylka **1–2 dB** – hraniční
