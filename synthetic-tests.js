@@ -81,6 +81,26 @@
     const band8k44 = M.octaveFullyCovered(8000, 44100, 20000);
     add('8 kHz oktáva při 44,1 kHz je plně pokrytá', band8k44, true, band8k44 === true);
 
+    const sr = 48000;
+    const n = 2048;
+    const freq = 937.5;
+    const amp = 0.1;
+    const samples = new Float32Array(n);
+    for (let i = 0; i < n; i += 1) samples[i] = amp * Math.sin(2 * Math.PI * freq * i / sr);
+    const block = M.analyzeTimeBlock(samples, sr, {
+      centers: [125,250,500,1000,2000,4000,8000,16000],
+      calibration: {},
+      analysisMaxHz: 20000,
+      offsetDb: 0
+    });
+    const expectedZ = 20 * Math.log10(amp / Math.sqrt(2));
+    add('Audio blok: Z-Leq známého sinu', block?.db?.Z, expectedZ, close(block?.db?.Z, expectedZ, 0.08), 'Testuje stejnou blokovou FFT cestu jako kontinuální Leq.');
+
+    const dominantRatio = block?.octavePowersZ?.[1000] / block?.powers?.Z;
+    add('Audio blok: sinus 937,5 Hz skončí v oktávě 1 kHz', dominantRatio, 1, Number.isFinite(dominantRatio) && dominantRatio > 0.98, 'Více než 98 % energie musí být v pásmu 1 kHz.');
+
+    add('Audio blok: neúplná 16kHz oktáva se nepočítá', block?.octavePowersZ?.[16000], null, block?.coverage?.[16000] === false && block?.octavePowersZ?.[16000] === null);
+
     render(tests);
     return tests;
   }
