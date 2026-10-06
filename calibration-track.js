@@ -1117,10 +1117,14 @@
   ];
 
   function resetWizard() {
+    state.trackFormat = 'wav';
     state.backgroundBefore = null;
     state.pink = null;
     state.backgroundAfter = null;
     state.white = null;
+    state.linearityLow = null;
+    state.linearityHigh = null;
+    state.linearity = null;
     state.backgroundDbfs = null;
     state.pinkDbfs = null;
     state.whiteDbfs = null;
@@ -1134,6 +1138,20 @@
   }
 
   function stepResult(stepIndex) {
+    if (stepIndex === 0) {
+      return `
+        <div class="calWizardResult">
+          <div class="calResultRow">
+            <span>Použitá nahrávka</span>
+            <select id="calTrackFormat" aria-label="Formát kalibrační nahrávky">
+              <option value="wav" ${state.trackFormat === 'wav' ? 'selected' : ''}>WAV v2 · referenční</option>
+              <option value="mp3" ${state.trackFormat === 'mp3' ? 'selected' : ''}>MP3 v2 · nouzově</option>
+            </select>
+          </div>
+          ${state.trackFormat === 'mp3' ? '<div class="calStatus warn">MP3 lze použít pro experimentální kontrolu, ale výsledná kalibrace bude označena jako omezená.</div>' : ''}
+        </div>`;
+    }
+
     if (stepIndex === 1 && state.room) {
       const c = classifyRoom(state.room.rt60Sec, state.room.earlyReflectionDb);
       const statusText = c.overall === 'good'
@@ -1149,15 +1167,41 @@
         </div>`;
     }
 
-    if (stepIndex === 2 && state.backgroundBefore) {
+    if (stepIndex === 2 && state.linearityLow) {
+      return `
+        <div class="calWizardResult">
+          <div class="calResultRow"><span>Slabší signál</span><strong>${state.linearityLow.dbfs.toFixed(1)} dBFS</strong></div>
+          <div class="calStatus good">První úroveň změřena ✓<br>Počkejte na hlasitější úsek kolem 0:40.</div>
+        </div>`;
+    }
+
+    if (stepIndex === 3 && state.linearity) {
+      const l = state.linearity;
+      const text = l.clipping
+        ? 'Záznam se dostal do limitace. Kalibraci nelze spolehlivě provést.'
+        : l.level === 'good'
+          ? 'Linearita je v pořádku.'
+          : l.level === 'warn'
+            ? 'Linearita je hraniční. Kalibrace může být méně spolehlivá.'
+            : 'Odezva není dostatečně lineární. Kalibraci nelze spolehlivě provést.';
+      return `
+        <div class="calWizardResult">
+          <div class="calResultRow"><span>Očekávaný rozdíl</span><strong>10,0 dB</strong></div>
+          <div class="calResultRow"><span>Naměřený rozdíl</span><strong>${l.measuredDifferenceDb.toFixed(1)} dB</strong></div>
+          <div class="calResultRow"><span>Odchylka</span><strong>${l.errorDb >= 0 ? '+' : ''}${l.errorDb.toFixed(1)} dB</strong></div>
+          <div class="calStatus ${l.level}">${text}</div>
+        </div>`;
+    }
+
+    if (stepIndex === 4 && state.backgroundBefore) {
       return '<div class="calStatus good">První měření pozadí hotové ✓</div>';
     }
 
-    if (stepIndex === 3 && state.pink) {
-      return '<div class="calStatus good">Růžový šum změřen ✓<br>Počkejte, až přestane, a změřte druhé pozadí.</div>';
+    if (stepIndex === 5 && state.pink) {
+      return '<div class="calStatus good">Růžový šum změřen ✓<br>Počkejte do 2:30 a změřte druhé pozadí.</div>';
     }
 
-    if (stepIndex === 4 && state.backgroundAfter && state.quality) {
+    if (stepIndex === 6 && state.backgroundAfter && state.quality) {
       const q = state.quality;
       const overallSnr = Number(q.overallSnrDb);
       const stable = q.backgroundChangeDb <= 3;
@@ -1202,7 +1246,7 @@
         </div>`;
     }
 
-    if (stepIndex === 5 && state.white) {
+    if (stepIndex === 7 && state.white) {
       const validation = state.quality?.whiteValidation || evaluateWhiteValidation();
       const finalQuality = state.finalQuality || evaluateFinalQuality();
       const overallError = Number(validation?.overallErrorDb);
@@ -1262,8 +1306,13 @@
   }
 
   function stepMayContinue(stepIndex) {
-    if (stepIndex === 1 && state.room) return classifyRoom(state.room.rt60Sec, state.room.earlyReflectionDb).overall !== 'bad';
-    if (stepIndex === 4 && state.quality) {
+    if (stepIndex === 1 && state.room) {
+      return classifyRoom(state.room.rt60Sec, state.room.earlyReflectionDb).overall !== 'bad';
+    }
+    if (stepIndex === 3 && state.linearity) {
+      return state.linearity.level !== 'bad';
+    }
+    if (stepIndex === 6 && state.quality) {
       return Number(state.quality.overallSnrDb) >= 15 && (state.quality.usableStandardBands?.length || 0) > 0;
     }
     return true;
@@ -1272,10 +1321,12 @@
   function stepDone(stepIndex) {
     if (stepIndex === 0) return state.step > 0;
     if (stepIndex === 1) return Boolean(state.room);
-    if (stepIndex === 2) return Boolean(state.backgroundBefore);
-    if (stepIndex === 3) return Boolean(state.pink);
-    if (stepIndex === 4) return Boolean(state.backgroundAfter && state.quality);
-    if (stepIndex === 5) return Boolean(state.white);
+    if (stepIndex === 2) return Boolean(state.linearityLow);
+    if (stepIndex === 3) return Boolean(state.linearityHigh && state.linearity);
+    if (stepIndex === 4) return Boolean(state.backgroundBefore);
+    if (stepIndex === 5) return Boolean(state.pink);
+    if (stepIndex === 6) return Boolean(state.backgroundAfter && state.quality);
+    if (stepIndex === 7) return Boolean(state.white);
     return false;
   }
 
