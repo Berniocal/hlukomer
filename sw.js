@@ -1,15 +1,16 @@
-const CACHE = "noise-meter-v24";
+const CACHE = "noise-meter-v25";
 const ASSETS = [
   "./",
-  "./index.html?v=24",
-  "./acoustic-math.js?v=24",
-  "./app.js?v=24",
-  "./timed.js?v=24",
-  "./calibration-profiles.js?v=24",
-  "./calibration-track.js?v=24",
-  "./manifest.webmanifest?v=24",
+  "./index.html?v=25",
+  "./acoustic-math.js?v=25",
+  "./measurement-worklet.js?v=25",
+  "./app.js?v=25",
+  "./timed.js?v=25",
+  "./calibration-profiles.js?v=25",
+  "./calibration-track.js?v=25",
+  "./manifest.webmanifest?v=25",
   "./testy.html",
-  "./synthetic-tests.js?v=24",
+  "./synthetic-tests.js?v=25",
   "./icons/icon-192.png",
   "./icons/icon-512.png"
 ];
@@ -50,6 +51,7 @@ self.addEventListener("fetch", event => {
     url.pathname.endsWith("/index.html") ||
     url.pathname.endsWith("/testy.html") ||
     url.pathname.endsWith("/acoustic-math.js") ||
+    url.pathname.endsWith("/measurement-worklet.js") ||
     url.pathname.endsWith("/synthetic-tests.js") ||
     url.pathname.endsWith("/app.js") ||
     url.pathname.endsWith("/timed.js") ||
