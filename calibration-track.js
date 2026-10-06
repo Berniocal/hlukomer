@@ -650,42 +650,60 @@
   }
 
   function evaluateLinearity() {
-    if (!state.linearityLow || !state.linearityHigh) return null;
+    if (!state.linearityLow || !state.linearityHigh || !state.backgroundBefore) return null;
 
     const expectedDb = TRACK.linearityExpectedDifferenceDb;
-    const measuredDb = state.linearityHigh.dbfs - state.linearityLow.dbfs;
+    const backgroundPower = state.backgroundAfter
+      ? MATH.worstBackgroundPower(state.backgroundBefore.overallPower, state.backgroundAfter.overallPower)
+      : state.backgroundBefore.overallPower;
+    const lowSourcePower = MATH.sourcePowerFromTotalAndBackground(state.linearityLow.overallPower, backgroundPower);
+    const highSourcePower = MATH.sourcePowerFromTotalAndBackground(state.linearityHigh.overallPower, backgroundPower);
+    const measuredDb = lowSourcePower > 0 && highSourcePower > 0
+      ? MATH.powerToDb(highSourcePower / lowSourcePower)
+      : NaN;
     const errorDb = measuredDb - expectedDb;
     const absError = Math.abs(errorDb);
     const clipping = (state.linearityLow.clippedFraction || 0) > 0.0001
       || (state.linearityHigh.clippedFraction || 0) > 0.0001
       || Number(state.linearityHigh.peakAbs) >= 0.995;
 
-    let level = absError <= 1 ? 'good' : absError <= 2 ? 'warn' : 'bad';
+    let level = Number.isFinite(measuredDb)
+      ? (absError <= 1 ? 'good' : absError <= 2 ? 'warn' : 'bad')
+      : 'bad';
     if (clipping) level = 'bad';
 
     const bandDifferencesDb = {};
     standardCalibrationBands().forEach(center => {
-      const low = Number(state.linearityLow.bandDb?.[center]);
-      const high = Number(state.linearityHigh.bandDb?.[center]);
-      bandDifferencesDb[center] = Number.isFinite(low) && Number.isFinite(high)
-        ? Number((high - low).toFixed(2))
+      const before = state.backgroundBefore.bandPowers?.[center] || 0;
+      const after = state.backgroundAfter?.bandPowers?.[center] || 0;
+      const bandBackground = state.backgroundAfter
+        ? MATH.worstBackgroundPower(before, after)
+        : before;
+      const low = MATH.sourcePowerFromTotalAndBackground(state.linearityLow.bandPowers?.[center] || 0, bandBackground);
+      const high = MATH.sourcePowerFromTotalAndBackground(state.linearityHigh.bandPowers?.[center] || 0, bandBackground);
+      bandDifferencesDb[center] = low > 0 && high > 0
+        ? Number(MATH.powerToDb(high / low).toFixed(2))
         : null;
     });
 
     const result = {
       measuredAt: new Date().toISOString(),
+      backgroundCorrected: true,
+      backgroundDbfs: Number(MATH.powerToDb(backgroundPower).toFixed(2)),
       expectedDifferenceDb: expectedDb,
-      measuredDifferenceDb: Number(measuredDb.toFixed(2)),
-      errorDb: Number(errorDb.toFixed(2)),
+      measuredDifferenceDb: Number.isFinite(measuredDb) ? Number(measuredDb.toFixed(2)) : null,
+      errorDb: Number.isFinite(errorDb) ? Number(errorDb.toFixed(2)) : null,
       toleranceDb: { good: 1, warning: 2 },
       clipping,
       low: {
         dbfs: Number(state.linearityLow.dbfs.toFixed(2)),
+        sourceDbfs: lowSourcePower > 0 ? Number(MATH.powerToDb(lowSourcePower).toFixed(2)) : null,
         peakAbs: state.linearityLow.peakAbs,
         clippedFraction: state.linearityLow.clippedFraction
       },
       high: {
         dbfs: Number(state.linearityHigh.dbfs.toFixed(2)),
+        sourceDbfs: highSourcePower > 0 ? Number(MATH.powerToDb(highSourcePower).toFixed(2)) : null,
         peakAbs: state.linearityHigh.peakAbs,
         clippedFraction: state.linearityHigh.clippedFraction
       },
