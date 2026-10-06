@@ -1357,6 +1357,10 @@
         ${!canContinue ? '<button type="button" id="calWizardRetry">Zkusit znovu</button>' : ''}
       </div>` : ''}`;
 
+    $('calTrackFormat')?.addEventListener('change', event => {
+      state.trackFormat = event.target.value === 'mp3' ? 'mp3' : 'wav';
+      renderWizard();
+    });
     $('calWizardRun')?.addEventListener('click', runCurrentStep);
     $('calWizardNext')?.addEventListener('click', () => {
       state.step += 1;
@@ -1364,7 +1368,12 @@
     });
     $('calWizardRetry')?.addEventListener('click', () => {
       if (state.step === 1) state.room = null;
-      if (state.step === 4) {
+      if (state.step === 3) {
+        state.linearityLow = null;
+        state.linearityHigh = null;
+        state.linearity = null;
+        state.step = 2;
+      } else if (state.step === 6) {
         state.backgroundAfter = null;
         state.quality = null;
       }
