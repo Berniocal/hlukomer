@@ -129,6 +129,155 @@
     return Math.max(Number(beforePower) || 0, Number(afterPower) || 0);
   }
 
+
+  function fftInPlace(real, imag) {
+    const n = real.length;
+    if (!n || n !== imag.length || (n & (n - 1)) !== 0) {
+      throw new Error('FFT vyžaduje délku 2^n.');
+    }
+
+    for (let i = 1, j = 0; i < n; i += 1) {
+      let bit = n >> 1;
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+      if (i < j) {
+        const tr = real[i]; real[i] = real[j]; real[j] = tr;
+        const ti = imag[i]; imag[i] = imag[j]; imag[j] = ti;
+      }
+    }
+
+    for (let len = 2; len <= n; len <<= 1) {
+      const angle = -2 * Math.PI / len;
+      const wLenR = Math.cos(angle);
+      const wLenI = Math.sin(angle);
+      for (let i = 0; i < n; i += len) {
+        let wr = 1;
+        let wi = 0;
+        const half = len >> 1;
+        for (let j = 0; j < half; j += 1) {
+          const uR = real[i + j];
+          const uI = imag[i + j];
+          const vIndex = i + j + half;
+          const vR = real[vIndex] * wr - imag[vIndex] * wi;
+          const vI = real[vIndex] * wi + imag[vIndex] * wr;
+          real[i + j] = uR + vR;
+          imag[i + j] = uI + vI;
+          real[vIndex] = uR - vR;
+          imag[vIndex] = uI - vI;
+          const nextWr = wr * wLenR - wi * wLenI;
+          wi = wr * wLenI + wi * wLenR;
+          wr = nextWr;
+        }
+      }
+    }
+  }
+
+  function analyzeTimeBlock(samples, sampleRate, options = {}) {
+    const input = samples instanceof Float32Array || samples instanceof Float64Array
+      ? samples
+      : Float32Array.from(samples || []);
+    const n = input.length;
+    const sr = Number(sampleRate);
+    if (!(sr > 0) || n < 2 || (n & (n - 1)) !== 0) return null;
+
+    const centers = Array.isArray(options.centers) && options.centers.length
+      ? options.centers.map(Number).filter(Number.isFinite)
+      : DEFAULT_OCTAVES;
+    const calibration = options.calibration || {};
+    const analysisMaxHz = Number(options.analysisMaxHz) || 20000;
+    const offsetDb = Number(options.offsetDb) || 0;
+
+    let rawRmsPower = 0;
+    const real = new Float64Array(n);
+    const imag = new Float64Array(n);
+    for (let i = 0; i < n; i += 1) {
+      const x = Number(input[i]) || 0;
+      rawRmsPower += x * x;
+      const window = n > 1 ? 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (n - 1)) : 1;
+      real[i] = x * window;
+    }
+    rawRmsPower /= n;
+
+    fftInPlace(real, imag);
+
+    const binHz = sr / n;
+    const maxHz = Math.min(analysisMaxHz, sr / 2);
+    let rawSpectrumPower = 0;
+    const adjusted = { A: 0, C: 0, Z: 0 };
+    const bandA = Object.fromEntries(centers.map(center => [center, 0]));
+    const bandZ = Object.fromEntries(centers.map(center => [center, 0]));
+    const coverage = Object.fromEntries(centers.map(center => [
+      center,
+      octaveFullyCovered(center, sr, analysisMaxHz)
+    ]));
+
+    const lastBin = Math.min((n >> 1) - 1, Math.floor(maxHz / binHz));
+    for (let i = 1; i <= lastBin; i += 1) {
+      const freq = i * binHz;
+      if (freq < 20) continue;
+      const p = real[i] * real[i] + imag[i] * imag[i];
+      if (!(p > 0)) continue;
+
+      rawSpectrumPower += p;
+      const cal = calibrationDb(freq, calibration, centers);
+      const pZ = p * Math.pow(10, cal / 10);
+      const pA = pZ * Math.pow(10, weightDb(freq, 'A') / 10);
+      const pC = pZ * Math.pow(10, weightDb(freq, 'C') / 10);
+      adjusted.Z += pZ;
+      adjusted.A += pA;
+      adjusted.C += pC;
+
+      const center = octaveForFrequency(freq, centers);
+      if (center !== null && coverage[center]) {
+        bandZ[center] += pZ;
+        bandA[center] += pA;
+      }
+    }
+
+    if (!(rawSpectrumPower > 0) || !(rawRmsPower >= 0)) return null;
+
+    const offsetFactor = Math.pow(10, offsetDb / 10);
+    const powers = {};
+    for (const type of ['A', 'C', 'Z']) {
+      powers[type] = adjusted[type] > 0
+        ? rawRmsPower * (adjusted[type] / rawSpectrumPower) * offsetFactor
+        : 0;
+    }
+
+    const octavePowersA = {};
+    const octavePowersZ = {};
+    centers.forEach(center => {
+      if (!coverage[center]) {
+        octavePowersA[center] = null;
+        octavePowersZ[center] = null;
+        return;
+      }
+      octavePowersA[center] = adjusted.A > 0 && bandA[center] > 0
+        ? powers.A * bandA[center] / adjusted.A
+        : 0;
+      octavePowersZ[center] = adjusted.Z > 0 && bandZ[center] > 0
+        ? powers.Z * bandZ[center] / adjusted.Z
+        : 0;
+    });
+
+    return {
+      durationMs: n / sr * 1000,
+      sampleRate: sr,
+      fftSize: n,
+      rawRmsPower,
+      rawDbfs: powerToDb(rawRmsPower),
+      powers,
+      db: {
+        A: powerToDb(powers.A),
+        C: powerToDb(powers.C),
+        Z: powerToDb(powers.Z)
+      },
+      octavePowersA,
+      octavePowersZ,
+      coverage
+    };
+  }
+
   window.HLUKOMER_MATH = Object.freeze({
     DEFAULT_OCTAVES,
     OCTAVE_FACTOR,
@@ -146,6 +295,8 @@
     sourcePowerFromTotalAndBackground,
     signalToNoiseSnr,
     classifySnr,
-    worstBackgroundPower
+    worstBackgroundPower,
+    fftInPlace,
+    analyzeTimeBlock
   });
 })();
