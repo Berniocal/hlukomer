@@ -31,4 +31,5 @@ jobs:
           git add calibration/bernio_kalibrace_v2.wav calibration/bernio_kalibrace_v2.mp3 calibration/bernio_kalibrace_v2_casovani.json
           git diff --cached --quiet && exit 0
           git commit -m "Generate Bernio calibration track v2"
+          git pull --rebase origin main
           git push
