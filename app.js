@@ -874,6 +874,14 @@
   drawEmptyCharts();
 
   if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(console.error));
+    window.addEventListener('load', async () => {
+      try {
+        const registration = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
+        await registration.update();
+        if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+      } catch (error) {
+        console.error(error);
+      }
+    });
   }
 })();
