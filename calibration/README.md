@@ -1,30 +1,55 @@
 # Referenční kalibrace hlukoměru
 
-Tato složka je připravená pro budoucí kalibraci podle konkrétních referenčních reproduktorů.
+Tato složka obsahuje podklady pro kalibraci webového hlukoměru Bernio podle konkrétního referenčního zdroje.
 
-## První profil
+## Aktuální kalibrační stopa
+
+**Bernio Calibration Track v2**
+
+- referenční formát: `bernio_kalibrace_v2.wav`
+- nouzová varianta: `bernio_kalibrace_v2.mp3`
+- mono, 44,1 kHz
+- délka: **3:35**
+- generátor: `generate_calibration_track_v2.py`
+- přesné časování a SHA-256: `bernio_kalibrace_v2_casovani.json`
+
+WAV je jediná varianta určená pro budoucí plnohodnotnou referenční kalibraci. MP3 lze použít pro experimentální kontrolu, ale pokud by měla sloužit jako reference, musí mít vlastní naměřené referenční hodnoty.
+
+## Průběh stopy v2
+
+- **0:05, 0:08 a 0:11** – tři krátké chirpy pro screening místnosti
+- **0:20–0:35** – slabší růžový šum pro test linearity
+- **0:40–0:55** – tentýž růžový šum přesně o **10,0 dB** výš
+- **1:00–1:30** – ticho pro pozadí před kalibrací
+- **1:30–2:30** – hlavní růžový šum
+- **2:30–3:00** – ticho pro pozadí po kalibraci
+- **3:00–3:30** – bílý šum pro nezávislou kontrolu
+- **3:30–3:35** – konečné ticho
+
+Test linearity používá stejný úsek růžového šumu ve dvou úrovních. Digitální rozdíl je přesně **10,0 dB**. Aplikace hodnotí rozdíl přibližně takto:
+
+- odchylka do **±1 dB** – linearita v pořádku
+- odchylka **1–2 dB** – hraniční
+- odchylka nad **2 dB** nebo zjištěné klipování – kalibraci nepovolit
+
+Tyto hranice jsou pracovní kritérium pro školní měřicí systém a budou ověřeny při fyzické validaci.
+
+## První referenční profil
 
 **T&G TG-113A (Hadex T615A)**
 
 - vzdálenost reproduktor–telefon: **1,50 m**
 - reproduktor a mikrofon telefonu ve stejné výšce, proti sobě
-- před kalibračním signálem: **5 s měření ticha**
-- hlavní kalibrace: **25 s růžového šumu**
-- bílý šum: kontrolní měření
-- po dokončení se porovná kalibrační signál s předchozím pozadím
-  - rozdíl ≥ 20 dB: vhodné podmínky
-  - rozdíl 15–20 dB: varování
-  - rozdíl < 15 dB: kalibrace se neuloží a aplikace doporučí přesun do tiššího prostředí
+- standardní kalibrační rozsah: **125 Hz–8 kHz**
+- **16 kHz** se zatím měří pouze experimentálně a neovlivňuje standardní hodnocení
+- pozadí se měří před i po hlavním signálu
+- SNR se vyhodnocuje po jednotlivých oktávových pásmech
+  - ≥ 20 dB: vhodné
+  - 15–20 dB: hraniční
+  - < 15 dB: pásmo se nepoužije
 
-## Připravené soubory
+Referenční hodnoty LZeq a oktáv pro růžový i bílý šum budou doplněny až po změření konkrétního reproduktoru kalibrovaným referenčním přístrojem při přesně definovaném nastavení hlasitosti.
 
-Do této složky jsou určeny soubory:
+## Starší stopa
 
-- `ruzovy_sum_2min.mp3`
-- `bily_sum_2min.mp3`
-
-Parametry připravených souborů: 120 s, mono, 44,1 kHz, MP3 192 kb/s.
-
-Referenční hodnoty Leq A/C/Z a oktáv se doplní až po změření konkrétního reproduktoru referenčním hlukoměrem při přesně definovaném nastavení hlasitosti.
-
-TG-113A má podle výrobce udávaný rozsah 120 Hz–18 kHz, proto se pro tento profil počítá jako spolehlivá část kalibrace především s pásmy od 125 Hz výš. 31,5 Hz a 63 Hz se nebudou bez ověření používat jako referenční korekce.
+Soubory `bernio_kalibrace_v1.wav`, `bernio_kalibrace_v1.mp3` a jejich časování zůstávají v repozitáři kvůli reprodukovatelnosti starších pokusů. Nový kalibrační průvodce používá v2.
