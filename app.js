@@ -104,6 +104,8 @@
   let stream = null;
   let source = null;
   let analyser = null;
+  let captureWorkletNode = null;
+  let captureWorkletSink = null;
   let timeData = null;
   let freqData = null;
   let visualFreqData = null;
@@ -113,6 +115,60 @@
   let frameCounter = 0;
   let lastRawDbfs = NaN;
   let lastPeakHz = NaN;
+
+  window.HLUKOMER_CONTINUOUS_CAPTURE = false;
+
+  function setContinuousCaptureMode(enabled) {
+    window.HLUKOMER_CONTINUOUS_CAPTURE = Boolean(enabled);
+    window.dispatchEvent(new CustomEvent('hlukomer-capture-mode', {
+      detail: { continuous: Boolean(enabled) }
+    }));
+  }
+
+  function resetContinuousCapture() {
+    try { captureWorkletNode?.port.postMessage({ type: 'reset' }); } catch (_) {}
+  }
+
+  window.hlukomerResetContinuousCapture = resetContinuousCapture;
+
+  async function setupContinuousCapture() {
+    setContinuousCaptureMode(false);
+    if (!audioCtx?.audioWorklet || typeof AudioWorkletNode !== 'function') return false;
+
+    try {
+      await audioCtx.audioWorklet.addModule('measurement-worklet.js?v=25');
+      captureWorkletNode = new AudioWorkletNode(audioCtx, 'hlukomer-capture', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1]
+      });
+      captureWorkletSink = audioCtx.createGain();
+      captureWorkletSink.gain.value = 0;
+
+      captureWorkletNode.port.onmessage = event => {
+        const data = event.data;
+        if (data?.type !== 'block' || !(data.samples instanceof Float32Array)) return;
+        window.dispatchEvent(new CustomEvent('hlukomer-audio-block', {
+          detail: { samples: data.samples, sampleRate: Number(data.sampleRate) || audioCtx?.sampleRate || 0 }
+        }));
+      };
+
+      source.connect(captureWorkletNode);
+      captureWorkletNode.connect(captureWorkletSink);
+      captureWorkletSink.connect(audioCtx.destination);
+      resetContinuousCapture();
+      setContinuousCaptureMode(true);
+      return true;
+    } catch (error) {
+      console.warn('AudioWorklet není dostupný, používám záložní měření.', error);
+      try { captureWorkletNode?.disconnect(); } catch (_) {}
+      try { captureWorkletSink?.disconnect(); } catch (_) {}
+      captureWorkletNode = null;
+      captureWorkletSink = null;
+      setContinuousCaptureMode(false);
+      return false;
+    }
+  }
 
   let minDB = Infinity;
   let maxDB = -Infinity;
@@ -525,6 +581,7 @@
     analyser.maxDecibels = 0;
     source.connect(analyser);
     allocateBuffers();
+    await setupContinuousCapture();
 
     running = true;
     startBtn.disabled = true;
@@ -559,6 +616,12 @@
     cancelAnimationFrame(raf);
     try { source?.disconnect(); } catch (_) {}
     try { analyser?.disconnect(); } catch (_) {}
+    try { captureWorkletNode && (captureWorkletNode.port.onmessage = null); } catch (_) {}
+    try { captureWorkletNode?.disconnect(); } catch (_) {}
+    try { captureWorkletSink?.disconnect(); } catch (_) {}
+    captureWorkletNode = null;
+    captureWorkletSink = null;
+    setContinuousCaptureMode(false);
     stream?.getTracks().forEach(t => t.stop());
     audioCtx?.close();
     stream = source = analyser = audioCtx = null;
