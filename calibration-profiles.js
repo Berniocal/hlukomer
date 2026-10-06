@@ -27,6 +27,7 @@ const HLUKOMER_CAL_FREQS = [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 160
 const HLUKOMER_CAL_PROFILE_NAME_KEY = 'hlukomer.calibrationProfileName.v1';
 const HLUKOMER_CAL_REFERENCE_KEY = 'hlukomer.calibrationReferenceSource.v1';
 const HLUKOMER_ROOM_TEST_KEY = 'hlukomer.roomAcousticsTest.v1';
+const HLUKOMER_CAL_QUALITY_KEY = 'hlukomer.calibrationQuality.v1';
 
 /* Oprava migrace uložených měření.
    Pokud už nový seznam existuje a je prázdný, znamená to, že uživatel
@@ -104,7 +105,11 @@ function hlukomerDownloadCalibration(profileName) {
     calibrationState: localStorage.getItem('hlukomer.calibrationState.v1') || 'uncalibrated',
     frequencyCalibrationDb: hlukomerReadFrequencyCalibration(),
     referenceSource: hlukomerCurrentReferenceSource(),
-    roomAcoustics: hlukomerReadRoomAcoustics()
+    roomAcoustics: hlukomerReadRoomAcoustics(),
+    calibrationQuality: (() => {
+      try { return JSON.parse(localStorage.getItem(HLUKOMER_CAL_QUALITY_KEY) || 'null'); }
+      catch (_) { return null; }
+    })()
   };
   const json = JSON.stringify(data, null, 2);
   const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
