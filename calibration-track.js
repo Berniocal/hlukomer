@@ -17,8 +17,9 @@
   const QUALITY_KEY = 'hlukomer.calibrationQuality.v1';
   const MATH = window.HLUKOMER_MATH;
   if (!MATH) throw new Error('Chybí acoustic-math.js');
-  const OCTAVE_FACTOR = MATH.OCTAVE_FACTOR;
-  const DEFAULT_CAL_BANDS = [125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+  const ENGINE_VERSION = String(window.HLUKOMER_CALIBRATION_ENGINE_VERSION || '2.0.0');
+  const DEFAULT_STANDARD_BANDS = [125, 250, 500, 1000, 2000, 4000, 8000];
+  const DEFAULT_EXPERIMENTAL_BANDS = [16000];
   const $ = id => document.getElementById(id);
 
   const state = {
@@ -31,14 +32,30 @@
     whiteDbfs: null,
     room: null,
     quality: null,
+    technicalCaptures: [],
+    finalQuality: null,
     step: 0,
     busy: false
   };
 
-  function calibrationBands() {
+  function standardCalibrationBands() {
     const configured = (window.HLUKOMER_CALIBRATION_PROFILES || [])[0]?.recommendedOctavesHz;
     const bands = Array.isArray(configured) ? configured.map(Number).filter(Number.isFinite) : [];
-    return bands.length ? bands : DEFAULT_CAL_BANDS;
+    return bands.length ? bands : DEFAULT_STANDARD_BANDS;
+  }
+
+  function experimentalCalibrationBands() {
+    const configured = (window.HLUKOMER_CALIBRATION_PROFILES || [])[0]?.experimentalOctavesHz;
+    const bands = Array.isArray(configured) ? configured.map(Number).filter(Number.isFinite) : [];
+    return bands.length ? bands : DEFAULT_EXPERIMENTAL_BANDS;
+  }
+
+  function calibrationBands() {
+    return [...new Set([...standardCalibrationBands(), ...experimentalCalibrationBands()])].sort((a, b) => a - b);
+  }
+
+  function isExperimentalBand(center) {
+    return experimentalCalibrationBands().includes(Number(center));
   }
 
   function emptyBandMap(value = 0) {
