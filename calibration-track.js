@@ -329,17 +329,17 @@
           <ul class="calGuideList">
             <li>podporovaný referenční reproduktor, zatím T&G TG-113A,</li>
             <li>telefon s aplikací Hlukoměr,</li>
-            <li>kalibrační nahrávku Bernio v1,</li>
+            <li>kalibrační nahrávku Bernio v2,</li>
             <li>metr pro nastavení vzdálenosti 1,50 m,</li>
             <li>co nejtišší místnost.</li>
           </ul>
         </div>
         <div class="calGuideSection">
           <h3>Stáhněte kalibrační nahrávku</h3>
-          <p>WAV je doporučený, protože lépe zachová krátké měřicí chirpy a jejich odrazy. Pokud ho reproduktor nepřehraje, použijte MP3.</p>
+          <p><strong>WAV je referenční varianta.</strong> MP3 je pouze nouzová možnost; pro plnohodnotnou automatickou kalibraci musí mít jednou vlastní referenční data.</p>
           <div class="calDownloadGrid">
-            <a class="calDownload recommended" href="${TRACK.wav}" download>Stáhnout WAV · doporučeno<small>nejlepší pro dozvuk a odrazy</small></a>
-            <a class="calDownload" href="${TRACK.mp3}" download>Stáhnout MP3<small>použijte, pokud WAV nejde přehrát</small></a>
+            <a class="calDownload recommended" href="${TRACK.wav}" download>Stáhnout WAV v2 · referenční<small>obsahuje i test linearity</small></a>
+            <a class="calDownload" href="${TRACK.mp3}" download>Stáhnout MP3 v2 · nouzově<small>není ekvivalentní referenčnímu WAV</small></a>
           </div>
         </div>
         <div class="calGuideSection">
@@ -354,7 +354,7 @@
         </div>
         <div class="calGuideSection">
           <h3>Co je v nahrávce</h3>
-          <p><strong>0:05–0:11</strong> · tři krátké chirpy pro test místnosti<br><strong>0:14–0:44</strong> · ticho pro první měření pozadí<br><strong>0:45–1:45</strong> · růžový šum pro kalibraci<br><strong>1:45–1:55</strong> · ticho pro druhé měření pozadí<br><strong>1:55–2:25</strong> · bílý šum pro kontrolu</p>
+          <p><strong>0:05–0:11</strong> · tři krátké chirpy pro test místnosti<br><strong>0:20–0:35</strong> · slabší růžový šum pro test linearity<br><strong>0:40–0:55</strong> · tentýž růžový šum přesně o 10 dB výš<br><strong>1:00–1:30</strong> · ticho pro pozadí před kalibrací<br><strong>1:30–2:30</strong> · růžový šum pro kalibraci<br><strong>2:30–3:00</strong> · ticho pro pozadí po kalibraci<br><strong>3:00–3:30</strong> · bílý šum pro kontrolu</p>
         </div>
         <div class="calGuideSection">
           <h3>Pak už jen postupujte podle telefonu</h3>
