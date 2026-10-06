@@ -15,7 +15,9 @@
 
   const ROOM_KEY = 'hlukomer.roomAcousticsTest.v1';
   const QUALITY_KEY = 'hlukomer.calibrationQuality.v1';
-  const OCTAVE_FACTOR = Math.SQRT2;
+  const MATH = window.HLUKOMER_MATH;
+  if (!MATH) throw new Error('Chybí acoustic-math.js');
+  const OCTAVE_FACTOR = MATH.OCTAVE_FACTOR;
   const DEFAULT_CAL_BANDS = [125, 250, 500, 1000, 2000, 4000, 8000, 16000];
   const $ = id => document.getElementById(id);
 
@@ -49,18 +51,15 @@
   }
 
   function powerToDb(power) {
-    return power > 0 ? 10 * Math.log10(power) : -Infinity;
+    return MATH.powerToDb(power);
   }
 
   function signalToNoiseSnr(totalPower, backgroundPower) {
-    if (!(totalPower > 0) || !(backgroundPower > 0) || totalPower <= backgroundPower) return -Infinity;
-    return 10 * Math.log10((totalPower - backgroundPower) / backgroundPower);
+    return MATH.signalToNoiseSnr(totalPower, backgroundPower);
   }
 
   function classifySnr(snr) {
-    if (snr >= 20) return { level: 'good', label: 'vhodné' };
-    if (snr >= 15) return { level: 'warn', label: 'hraniční' };
-    return { level: 'bad', label: 'nepoužít' };
+    return MATH.classifySnr(snr);
   }
 
   function median(values) {
@@ -558,7 +557,7 @@
   function evaluateCalibrationQuality() {
     if (!state.backgroundBefore || !state.pink || !state.backgroundAfter) return null;
 
-    const backgroundPower = Math.max(state.backgroundBefore.overallPower, state.backgroundAfter.overallPower);
+    const backgroundPower = MATH.worstBackgroundPower(state.backgroundBefore.overallPower, state.backgroundAfter.overallPower);
     const overallSnrDb = signalToNoiseSnr(state.pink.overallPower, backgroundPower);
     const backgroundChangeDb = Math.abs(state.backgroundAfter.dbfs - state.backgroundBefore.dbfs);
     const bands = {};
@@ -567,7 +566,7 @@
     calibrationBands().forEach(center => {
       const before = state.backgroundBefore.bandPowers?.[center] || 0;
       const after = state.backgroundAfter.bandPowers?.[center] || 0;
-      const bg = Math.max(before, after);
+      const bg = MATH.worstBackgroundPower(before, after);
       const total = state.pink.bandPowers?.[center] || 0;
       const snrDb = signalToNoiseSnr(total, bg);
       const classification = classifySnr(snrDb);
