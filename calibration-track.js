@@ -1066,9 +1066,20 @@
       }
     },
     {
+      icon: '🤫',
+      title: 'Pozadí před kalibrací',
+      text: 'Po chirpech následuje ticho přibližně od 0:20 do 0:45. Změřte hluk pozadí.',
+      action: 'Změřit pozadí',
+      run: async progressEl => {
+        state.backgroundBefore = await captureAcousticSample(5, progressEl, 'background-before');
+        state.backgroundDbfs = state.backgroundBefore.dbfs;
+        return state.backgroundBefore;
+      }
+    },
+    {
       icon: '🔉',
       title: 'Linearita · slabší signál',
-      text: 'Počkejte na první úsek růžového šumu přibližně v čase 0:20. Jakmile začne, spusťte měření.',
+      text: 'Počkejte na první růžový šum přibližně v čase 0:50. Jakmile začne, spusťte měření.',
       action: 'Změřit slabší signál',
       run: async progressEl => {
         state.linearityLow = await captureAcousticSample(8, progressEl, 'linearity-low');
@@ -1078,23 +1089,12 @@
     {
       icon: '🔊',
       title: 'Linearita · hlasitější signál',
-      text: 'Počkejte na druhý úsek stejného růžového šumu přibližně v čase 0:40. Je přesně o 10 dB výš.',
+      text: 'Počkejte na druhý úsek stejného růžového šumu přibližně v čase 1:10. Je přesně o 10 dB výš.',
       action: 'Změřit hlasitější signál',
       run: async progressEl => {
         state.linearityHigh = await captureAcousticSample(8, progressEl, 'linearity-high');
         evaluateLinearity();
         return state.linearityHigh;
-      }
-    },
-    {
-      icon: '🤫',
-      title: 'Pozadí před kalibrací',
-      text: 'Od 1:00 do 1:30 je v nahrávce ticho. Změřte hluk pozadí.',
-      action: 'Změřit pozadí',
-      run: async progressEl => {
-        state.backgroundBefore = await captureAcousticSample(5, progressEl, 'background-before');
-        state.backgroundDbfs = state.backgroundBefore.dbfs;
-        return state.backgroundBefore;
       }
     },
     {
@@ -1115,6 +1115,7 @@
       action: 'Změřit pozadí po',
       run: async progressEl => {
         state.backgroundAfter = await captureAcousticSample(5, progressEl, 'background-after');
+        evaluateLinearity();
         evaluateCalibrationQuality();
         return state.backgroundAfter;
       }
