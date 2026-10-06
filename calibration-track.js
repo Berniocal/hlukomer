@@ -764,6 +764,8 @@
       bands,
       usableBands,
       usableStandardBands,
+      trackFormat: state.trackFormat,
+      linearity: state.linearity,
       technicalMetadata: technicalSummary(),
       whiteValidation: null,
       finalAssessment: null
