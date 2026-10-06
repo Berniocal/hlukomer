@@ -21,7 +21,7 @@
   const QUALITY_KEY = 'hlukomer.calibrationQuality.v1';
   const MATH = window.HLUKOMER_MATH;
   if (!MATH) throw new Error('Chybí acoustic-math.js');
-  const ENGINE_VERSION = String(window.HLUKOMER_CALIBRATION_ENGINE_VERSION || '2.0.0');
+  const ENGINE_VERSION = String(window.HLUKOMER_CALIBRATION_ENGINE_VERSION || '2.1.0');
   const DEFAULT_STANDARD_BANDS = [125, 250, 500, 1000, 2000, 4000, 8000];
   const DEFAULT_EXPERIMENTAL_BANDS = [16000];
   const $ = id => document.getElementById(id);
