@@ -39,12 +39,13 @@
 </div></details>
 <details><summary>Ruční kalibrace SPL</summary><div class="detailbody"><div class="row"><input id="offsetNum" type="number" min="-40" step="0.1"><button id="calibrateBtn">Kalibrovat</button></div></div></details>
 <details><summary>Ruční frekvenční kalibrace</summary><div class="detailbody"><button id="freqCalBtn">Kalibrovat aktuální tón</button><div class="calgrid" id="calGrid"></div><button id="zeroCalBtn">Vynulovat korekce</button></div></details>
-<details><summary>Technická nastavení</summary><div class="detailbody"><div id="micProcessingStatus" class="micProcessingStatus">Skutečné nastavení mikrofonu se ověří po spuštění měření.</div><div class="row"><select id="displayResponse"><option value="0.25">Rychlá odezva</option><option value="0.8" selected>Normální odezva</option><option value="1.5">Klidná odezva</option></select></div><div class="row"><select id="fftSize"><option>2048</option><option selected>4096</option><option>8192</option><option>16384</option><option>32768</option></select></div><div id="resolutionNote"></div></div></details>
+<details><summary>Technická nastavení</summary><div class="detailbody"><div id="micProcessingStatus" class="micProcessingStatus">Skutečné nastavení mikrofonu se ověří po spuštění měření.</div><button type="button" onclick="location.href='testy.html'">Syntetický test výpočtů</button><div class="row"><select id="displayResponse"><option value="0.25">Rychlá odezva</option><option value="0.8" selected>Normální odezva</option><option value="1.5">Klidná odezva</option></select></div><div class="row"><select id="fftSize"><option>2048</option><option selected>4096</option><option>8192</option><option>16384</option><option>32768</option></select></div><div id="resolutionNote"></div></div></details>
 <div id="permWarn" class="warn">Mikrofon není dostupný.</div></aside>
 </main>
-<script src="calibration-profiles.js?v=22"></script>
-<script src="calibration-track.js?v=22"></script>
-<script src="app.js?v=22"></script>
-<script src="timed.js?v=22"></script>
+<script src="acoustic-math.js?v=23"></script>
+<script src="calibration-profiles.js?v=23"></script>
+<script src="calibration-track.js?v=23"></script>
+<script src="app.js?v=23"></script>
+<script src="timed.js?v=23"></script>
 </body>
 </html>
