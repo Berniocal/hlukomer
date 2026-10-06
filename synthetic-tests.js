@@ -101,6 +101,26 @@
 
     add('Audio blok: neúplná 16kHz oktáva se nepočítá', block?.octavePowersZ?.[16000], null, block?.coverage?.[16000] === false && block?.octavePowersZ?.[16000] === null);
 
+    const louderSamples = new Float32Array(n);
+    const gain10Db = Math.pow(10, 10 / 20);
+    for (let i = 0; i < n; i += 1) louderSamples[i] = samples[i] * gain10Db;
+    const louderBlock = M.analyzeTimeBlock(louderSamples, sr, {
+      centers: [125,250,500,1000,2000,4000,8000,16000],
+      calibration: {},
+      analysisMaxHz: 20000,
+      offsetDb: 0
+    });
+    const blockDelta = louderBlock?.db?.Z - block?.db?.Z;
+    add('Linearita: stejný PCM signál +10 dB', blockDelta, 10, close(blockDelta, 10, 0.01), 'Ověřuje rozdíl dvou úrovní přes stejnou blokovou výpočetní cestu.');
+
+    const linearityBg = M.dbToPower(-40);
+    const lowSource = M.dbToPower(-20);
+    const highSource = lowSource * 10;
+    const lowRecovered = M.sourcePowerFromTotalAndBackground(lowSource + linearityBg, linearityBg);
+    const highRecovered = M.sourcePowerFromTotalAndBackground(highSource + linearityBg, linearityBg);
+    const correctedDelta = M.powerToDb(highRecovered / lowRecovered);
+    add('Linearita: energetické odečtení pozadí zachová +10 dB', correctedDelta, 10, close(correctedDelta, 10, 1e-10));
+
     render(tests);
     return tests;
   }
