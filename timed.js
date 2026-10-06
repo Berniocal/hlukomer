@@ -5,7 +5,8 @@
   const TYPES = ['A', 'C', 'Z'];
   const OCTAVES = [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
   const OCTAVE_FACTOR = Math.SQRT2;
-  const SAMPLE_MS = 80;
+  const MAX_FRAME_DT_MS = 60;
+  const UI_TIMER_MS = 100;
 
   const nativeStart = $('startBtn');
   const nativeStop = $('stopBtn');
@@ -38,7 +39,8 @@
     timedV2: 'hlukomer.timedResults.v2',
     timedV1: 'hlukomer.timedResults.v1',
     manualV2: 'hlukomer.manualResults.v2',
-    nativeV1: 'hlukomer.measurements.v1'
+    nativeV1: 'hlukomer.measurements.v1',
+    calibrationState: 'hlukomer.calibrationState.v1'
   };
 
   let results = loadResults();
@@ -47,6 +49,8 @@
   let capturedFreq = null;
   let capturedSampleRate = 0;
   let capturedFftSize = 0;
+  let capturedSerial = 0;
+  let lastIntegratedSerial = 0;
   let captureEnabled = false;
 
   let sessionActive = false;
@@ -67,6 +71,7 @@
   let measurementSpl = true;
   let measurementOffset = 40;
   let measurementCalibration = {};
+  let measurementCalibrated = false;
   let targetSeconds = 5;
   let sampleTimer = 0;
 
@@ -208,6 +213,9 @@
             capturedFreq = new Float32Array(array);
             capturedSampleRate = context.sampleRate || 0;
             capturedFftSize = node.fftSize || array.length * 2;
+            capturedSerial += 1;
+            // Integrujeme při každém čerstvém FFT rámci místo starého 80ms časovače.
+            sampleMeasurement(performance.now(), capturedSerial);
           }
         };
         return node;
@@ -259,6 +267,7 @@
       targetSec: finiteOrNull(item.targetSec),
       completedTarget: Boolean(item.completedTarget),
       spl: item.spl !== undefined ? Boolean(item.spl) : !String(item.unit || '').includes('dBFS'),
+      calibrated: item.calibrated === true ? true : item.calibrated === false ? false : null,
       leqA,
       leqC,
       leqZ,
@@ -445,12 +454,14 @@
     capturedFreq = null;
     capturedSampleRate = 0;
     capturedFftSize = 0;
+    lastIntegratedSerial = capturedSerial;
     lastIntegrationPerf = performance.now();
 
     measurementWeighting = weighting?.value || 'A';
     measurementSpl = !!showSPL?.checked;
     measurementOffset = loadNumber('hlukomer.offsetDB.v2', loadNumber('noiseMeterOffsetDB', 40));
     measurementCalibration = loadCalibration();
+    measurementCalibrated = localStorage.getItem(LS.calibrationState) !== null && localStorage.getItem(LS.calibrationState) !== 'uncalibrated';
     targetSeconds = clampSeconds(Number(timedSeconds.value));
 
     captureEnabled = true;
@@ -458,7 +469,7 @@
     setTransportState('running');
     resetLeqDisplay();
     clearInterval(sampleTimer);
-    sampleTimer = setInterval(sampleMeasurement, SAMPLE_MS);
+    sampleTimer = setInterval(updateCountdown, UI_TIMER_MS);
   }
 
   function integrateSnapshot(snapshot, dt) {
@@ -483,13 +494,15 @@
     }
   }
 
-  function sampleMeasurement() {
+  function sampleMeasurement(now = performance.now(), serial = capturedSerial) {
     if (!sessionActive || paused || finishing) return;
-    const now = performance.now();
+    if (serial === lastIntegratedSerial) return;
     let dt = now - lastIntegrationPerf;
     lastIntegrationPerf = now;
+    lastIntegratedSerial = serial;
     if (!(dt > 0)) return;
-    dt = Math.min(dt, 250);
+    // Při zatížení nebo přepnutí karty nepřipisujeme jeden starý FFT snímek dlouhému intervalu.
+    dt = Math.min(dt, MAX_FRAME_DT_MS);
 
     if (timedMode.checked) {
       const remaining = targetSeconds * 1000 - integratedMs;
@@ -577,8 +590,11 @@
   }
 
   function sampleMeasurementFinal() {
+    if (capturedSerial === lastIntegratedSerial) return;
     const now = performance.now();
-    let dt = Math.min(Math.max(0, now - lastIntegrationPerf), 250);
+    let dt = Math.min(Math.max(0, now - lastIntegrationPerf), MAX_FRAME_DT_MS);
+    lastIntegrationPerf = now;
+    lastIntegratedSerial = capturedSerial;
     if (timedMode.checked) dt = Math.min(dt, Math.max(0, targetSeconds * 1000 - integratedMs));
     if (!(dt > 0)) return;
     const snapshot = currentSnapshot();
@@ -639,6 +655,7 @@
       targetSec: timedMode.checked ? targetSeconds : null,
       completedTarget: !!(autoFinished && timedMode.checked),
       spl: measurementSpl,
+      calibrated: measurementSpl ? measurementCalibrated : null,
       leqA: Number(totalLeq('A').toFixed(2)),
       leqC: Number(totalLeq('C').toFixed(2)),
       leqZ: Number(totalLeq('Z').toFixed(2)),
@@ -748,7 +765,7 @@
       const meta = document.createElement('div');
       meta.className = 'timedMeta';
       const d = new Date(item.startedAt);
-      meta.textContent = `${Number(item.durationSec).toFixed(1)} s · ${item.timed ? 'časované' : 'ruční'} · ${d.toLocaleTimeString('cs-CZ', {hour:'2-digit',minute:'2-digit',second:'2-digit'})}`;
+      meta.textContent = `${Number(item.durationSec).toFixed(1)} s · ${item.timed ? 'časované' : 'ruční'} · ${d.toLocaleTimeString('cs-CZ', {hour:'2-digit',minute:'2-digit',second:'2-digit'})}${item.spl && item.calibrated === false ? ' · nekalibrované SPL' : ''}`;
       left.append(name, meta);
 
       const right = document.createElement('div');
@@ -797,7 +814,7 @@
     }
 
     const rows = [[
-      'Název','Datum','Čas','Délka [s]','Režim','Hladina',
+      'Název','Datum','Čas','Délka [s]','Režim','Hladina','Kalibrace SPL',
       'Leq A [dB]','Leq C [dB]','Leq Z [dB]',
       'Minimum Leq 1 s A [dB]','Maximum Leq 1 s A [dB]',
       ...OCTAVES.map(f => octaveHeader(f, 'A')),
@@ -813,6 +830,7 @@
         numCs(item.durationSec),
         item.timed ? 'časované' : 'ruční',
         item.spl ? 'SPL' : 'dBFS',
+        item.calibrated === true ? 'ano' : item.calibrated === false ? 'ne' : '',
         numCs(item.leqA),
         numCs(item.leqC),
         numCs(item.leqZ),
