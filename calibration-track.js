@@ -791,6 +791,160 @@
     return estimatedWhite - whiteRef;
   }
 
+  function getReferenceBand(profile, noise, center) {
+    const ref = profile?.reference;
+    if (!ref) return null;
+    const candidates = [
+      ref?.[noise]?.octavesZ?.[center],
+      ref?.[noise]?.octavesZ?.[String(center)],
+      ref?.[`${noise}OctavesZ`]?.[center],
+      ref?.[`${noise}OctavesZ`]?.[String(center)],
+      ref?.octavesZ?.[noise]?.[center],
+      ref?.octavesZ?.[noise]?.[String(center)]
+    ];
+    for (const value of candidates) {
+      const n = Number(value);
+      if (Number.isFinite(n)) return n;
+    }
+    return null;
+  }
+
+  function evaluateWhiteValidation() {
+    if (!state.white || !state.pink || !state.quality) return null;
+    const profile = getReferenceProfile();
+    const rows = {};
+    let referenceBands = 0;
+    let checkedBands = 0;
+    let badBands = 0;
+    let warnBands = 0;
+
+    calibrationBands().forEach(center => {
+      const experimental = isExperimentalBand(center);
+      const fullyCovered = state.white.coverage?.[center] === true && state.pink.coverage?.[center] === true;
+      if (!fullyCovered) {
+        rows[center] = {
+          coverage: 'incomplete',
+          experimental,
+          whiteSnrDb: null,
+          errorDb: null,
+          level: experimental ? 'warn' : 'bad'
+        };
+        return;
+      }
+
+      const before = state.backgroundBefore?.bandPowers?.[center] || 0;
+      const after = state.backgroundAfter?.bandPowers?.[center] || 0;
+      const background = MATH.worstBackgroundPower(before, after);
+      const totalWhite = state.white.bandPowers?.[center] || 0;
+      const whiteSnr = signalToNoiseSnr(totalWhite, background);
+
+      const pinkRef = getReferenceBand(profile, 'pink', center);
+      const whiteRef = getReferenceBand(profile, 'white', center);
+      let errorDb = null;
+      let level = classifySnr(whiteSnr).level;
+
+      if (pinkRef !== null && whiteRef !== null
+          && Number.isFinite(state.pink.bandDb?.[center])
+          && Number.isFinite(state.white.bandDb?.[center])
+          && whiteSnr >= 15) {
+        referenceBands += 1;
+        const correction = pinkRef - state.pink.bandDb[center];
+        const estimatedWhite = state.white.bandDb[center] + correction;
+        errorDb = estimatedWhite - whiteRef;
+        const abs = Math.abs(errorDb);
+        level = abs <= 1 ? 'good' : abs <= 2 ? 'warn' : 'bad';
+        checkedBands += 1;
+        if (level === 'bad') badBands += 1;
+        if (level === 'warn') warnBands += 1;
+      }
+
+      rows[center] = {
+        coverage: 'complete',
+        experimental,
+        whiteSnrDb: Number.isFinite(whiteSnr) ? Number(whiteSnr.toFixed(2)) : null,
+        errorDb: Number.isFinite(errorDb) ? Number(errorDb.toFixed(2)) : null,
+        level
+      };
+    });
+
+    const overallError = validationErrorDb();
+    const result = {
+      measuredAt: new Date().toISOString(),
+      overallErrorDb: Number.isFinite(overallError) ? Number(overallError.toFixed(2)) : null,
+      referenceBands,
+      checkedBands,
+      badBands,
+      warnBands,
+      bands: rows
+    };
+
+    state.quality.whiteValidation = result;
+    state.quality.technicalMetadata = technicalSummary();
+    localStorage.setItem(QUALITY_KEY, JSON.stringify(state.quality));
+    return result;
+  }
+
+  function evaluateFinalQuality() {
+    if (!state.quality) return null;
+    const room = state.room ? classifyRoom(state.room.rt60Sec, state.room.earlyReflectionDb) : { overall: 'bad' };
+    const standard = standardCalibrationBands();
+    const q = state.quality;
+    const white = q.whiteValidation;
+    const standardUsable = standard.filter(center => q.bands?.[center]?.usable);
+    const standardGood = standard.filter(center => Number(q.bands?.[center]?.snrDb) >= 20);
+    const backgroundStable = Number(q.backgroundChangeDb) <= 3;
+    const allWorklet = state.technicalCaptures.length > 0
+      && state.technicalCaptures.every(item => item.captureEngine === 'audio-worklet');
+    const referenceAvailable = Number.isFinite(white?.overallErrorDb)
+      || standard.some(center => Number.isFinite(white?.bands?.[center]?.errorDb));
+
+    let level = 'good';
+    const reasons = [];
+
+    if (room.overall === 'bad' || Number(q.overallSnrDb) < 15 || standardUsable.length === 0) {
+      level = 'bad';
+    }
+    if (!backgroundStable || standardUsable.length < standard.length || !allWorklet) {
+      if (level !== 'bad') level = 'warn';
+    }
+    if (!referenceAvailable) {
+      if (level !== 'bad') level = 'warn';
+      reasons.push('Chybí referenční hodnoty reproduktoru pro úplnou kontrolu.');
+    } else {
+      const overallAbs = Math.abs(Number(white.overallErrorDb));
+      if (Number.isFinite(overallAbs) && overallAbs > 2) level = 'bad';
+      else if (Number.isFinite(overallAbs) && overallAbs > 1 && level === 'good') level = 'warn';
+
+      if (white.badBands > 0) level = 'bad';
+      else if (white.warnBands > 0 && level === 'good') level = 'warn';
+    }
+
+    if (!backgroundStable) reasons.push('Pozadí se během kalibrace změnilo o více než 3 dB.');
+    if (standardUsable.length < standard.length) reasons.push(`Použitelných je ${standardUsable.length} z ${standard.length} standardních pásem.`);
+    if (!allWorklet) reasons.push('Alespoň jeden krok použil záložní zvukový sběr místo AudioWorkletu.');
+    if (experimentalCalibrationBands().length) reasons.push('16 kHz zůstává experimentální a neovlivňuje standardní hodnocení.');
+
+    const label = level === 'good' ? 'dobrá' : level === 'warn' ? 'omezená' : 'nevyhovující';
+    const result = {
+      level,
+      label,
+      assessedAt: new Date().toISOString(),
+      standardBandsTotal: standard.length,
+      standardBandsUsable: standardUsable.length,
+      standardBandsGood: standardGood.length,
+      room: room.overall,
+      backgroundStable,
+      allAudioWorklet: allWorklet,
+      referenceValidationAvailable: referenceAvailable,
+      reasons
+    };
+    state.finalQuality = result;
+    q.finalAssessment = result;
+    q.technicalMetadata = technicalSummary();
+    localStorage.setItem(QUALITY_KEY, JSON.stringify(q));
+    return result;
+  }
+
   const STEPS = [
     {
       icon: '📐',
