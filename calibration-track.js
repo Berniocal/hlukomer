@@ -815,7 +815,7 @@
       text: 'Nahrávka je teď tichá. Změřte hluk pozadí ještě před růžovým šumem.',
       action: 'Změřit pozadí',
       run: async progressEl => {
-        state.backgroundBefore = await captureAcousticSample(5, progressEl);
+        state.backgroundBefore = await captureAcousticSample(5, progressEl, 'background-before');
         state.backgroundDbfs = state.backgroundBefore.dbfs;
         return state.backgroundBefore;
       }
@@ -826,7 +826,7 @@
       text: 'Počkejte, až začne růžový šum. Jakmile ho uslyšíte, spusťte měření kalibračního signálu.',
       action: 'Změřit růžový šum',
       run: async progressEl => {
-        state.pink = await captureAcousticSample(25, progressEl);
+        state.pink = await captureAcousticSample(25, progressEl, 'pink');
         state.pinkDbfs = state.pink.dbfs;
         return state.pink;
       }
@@ -837,7 +837,7 @@
       text: 'Jakmile růžový šum přestane, je 10 s ticha. Hned spusťte druhé měření pozadí.',
       action: 'Změřit pozadí po',
       run: async progressEl => {
-        state.backgroundAfter = await captureAcousticSample(5, progressEl);
+        state.backgroundAfter = await captureAcousticSample(5, progressEl, 'background-after');
         evaluateCalibrationQuality();
         return state.backgroundAfter;
       }
@@ -848,7 +848,7 @@
       text: 'Počkejte, až začne bílý šum. Potom spusťte kontrolu.',
       action: 'Spustit kontrolu',
       run: async progressEl => {
-        state.white = await captureAcousticSample(15, progressEl);
+        state.white = await captureAcousticSample(15, progressEl, 'white');
         state.whiteDbfs = state.white.dbfs;
         return state.white;
       }
