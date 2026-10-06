@@ -1030,9 +1030,12 @@
     {
       icon: '📐',
       title: 'Připravte sestavu',
-      text: 'Telefon a reproduktor dejte 1,50 m od sebe, ve stejné výšce a proti sobě. Připravte kalibrační nahrávku na začátek.',
+      text: 'Telefon a reproduktor dejte 1,50 m od sebe, ve stejné výšce a proti sobě. Připravte kalibrační nahrávku Bernio v2 na začátek.',
       action: 'Jsem připraven',
-      run: async () => true
+      run: async () => {
+        state.trackFormat = $('calTrackFormat')?.value || state.trackFormat || 'wav';
+        return true;
+      }
     },
     {
       icon: '〰️',
@@ -1045,9 +1048,30 @@
       }
     },
     {
+      icon: '🔉',
+      title: 'Linearita · slabší signál',
+      text: 'Počkejte na první úsek růžového šumu přibližně v čase 0:20. Jakmile začne, spusťte měření.',
+      action: 'Změřit slabší signál',
+      run: async progressEl => {
+        state.linearityLow = await captureAcousticSample(8, progressEl, 'linearity-low');
+        return state.linearityLow;
+      }
+    },
+    {
+      icon: '🔊',
+      title: 'Linearita · hlasitější signál',
+      text: 'Počkejte na druhý úsek stejného růžového šumu přibližně v čase 0:40. Je přesně o 10 dB výš.',
+      action: 'Změřit hlasitější signál',
+      run: async progressEl => {
+        state.linearityHigh = await captureAcousticSample(8, progressEl, 'linearity-high');
+        evaluateLinearity();
+        return state.linearityHigh;
+      }
+    },
+    {
       icon: '🤫',
       title: 'Pozadí před kalibrací',
-      text: 'Nahrávka je teď tichá. Změřte hluk pozadí ještě před růžovým šumem.',
+      text: 'Od 1:00 do 1:30 je v nahrávce ticho. Změřte hluk pozadí.',
       action: 'Změřit pozadí',
       run: async progressEl => {
         state.backgroundBefore = await captureAcousticSample(5, progressEl, 'background-before');
@@ -1058,7 +1082,7 @@
     {
       icon: '🌸',
       title: 'Růžový šum',
-      text: 'Počkejte, až začne růžový šum. Jakmile ho uslyšíte, spusťte měření kalibračního signálu.',
+      text: 'Od 1:30 začíná hlavní růžový šum. Jakmile ho uslyšíte, spusťte měření kalibračního signálu.',
       action: 'Změřit růžový šum',
       run: async progressEl => {
         state.pink = await captureAcousticSample(25, progressEl, 'pink');
@@ -1069,7 +1093,7 @@
     {
       icon: '🤫',
       title: 'Pozadí po kalibraci',
-      text: 'Jakmile růžový šum přestane, je 10 s ticha. Hned spusťte druhé měření pozadí.',
+      text: 'Od 2:30 do 3:00 je znovu ticho. Změřte druhé pozadí.',
       action: 'Změřit pozadí po',
       run: async progressEl => {
         state.backgroundAfter = await captureAcousticSample(5, progressEl, 'background-after');
@@ -1080,7 +1104,7 @@
     {
       icon: '✓',
       title: 'Kontrola bílým šumem',
-      text: 'Počkejte, až začne bílý šum. Potom spusťte kontrolu.',
+      text: 'Od 3:00 začíná bílý šum. Spusťte závěrečnou kontrolu.',
       action: 'Spustit kontrolu',
       run: async progressEl => {
         state.white = await captureAcousticSample(15, progressEl, 'white');
