@@ -498,8 +498,10 @@
   async function captureAcousticSample(durationSec, progressEl) {
     let sumSquares = 0;
     let sampleCount = 0;
+    let measuredSampleRate = 0;
     const bandPowerSum = emptyBandMap(0);
     const bandFrames = emptyBandMap(0);
+    const coverage = Object.fromEntries(calibrationBands().map(center => [center, null]));
 
     await withMicrophone(durationSec, chunk => {
       for (let i = 0; i < chunk.length; i += 1) {
@@ -509,9 +511,13 @@
     }, (elapsed, total) => {
       if (progressEl) progressEl.textContent = `Měřím… ${Math.ceil(elapsed)} / ${total} s`;
     }, (spectrum, sampleRate, fftSize) => {
+      measuredSampleRate = sampleRate;
       const binHz = sampleRate / fftSize;
       const nyquist = sampleRate / 2;
       calibrationBands().forEach(center => {
+        const fullyCovered = MATH.octaveFullyCovered(center, sampleRate, 20000);
+        coverage[center] = fullyCovered;
+        if (!fullyCovered) return;
         const lo = center / OCTAVE_FACTOR;
         const hi = Math.min(center * OCTAVE_FACTOR, nyquist);
         if (lo >= nyquist || hi <= lo) return;
@@ -544,6 +550,8 @@
     return {
       overallPower,
       dbfs: powerToDb(overallPower),
+      sampleRate: measuredSampleRate,
+      coverage,
       bandPowers,
       bandDb
     };
@@ -564,6 +572,20 @@
     const usableBands = [];
 
     calibrationBands().forEach(center => {
+      const fullyCovered = state.backgroundBefore.coverage?.[center] !== false
+        && state.pink.coverage?.[center] !== false
+        && state.backgroundAfter.coverage?.[center] !== false;
+
+      if (!fullyCovered) {
+        bands[center] = {
+          snrDb: null,
+          level: 'bad',
+          usable: false,
+          coverage: 'incomplete'
+        };
+        return;
+      }
+
       const before = state.backgroundBefore.bandPowers?.[center] || 0;
       const after = state.backgroundAfter.bandPowers?.[center] || 0;
       const bg = MATH.worstBackgroundPower(before, after);
@@ -573,7 +595,8 @@
       bands[center] = {
         snrDb: Number.isFinite(snrDb) ? Number(snrDb.toFixed(2)) : null,
         level: classification.level,
-        usable: snrDb >= 15
+        usable: snrDb >= 15,
+        coverage: 'complete'
       };
       if (snrDb >= 15) usableBands.push(center);
     });
@@ -586,6 +609,8 @@
       backgroundChangeDb: Number(backgroundChangeDb.toFixed(2)),
       overallSnrDb: Number.isFinite(overallSnrDb) ? Number(overallSnrDb.toFixed(2)) : null,
       thresholdsDb: { good: 20, minimum: 15 },
+      analysisMaxHz: 20000,
+      sampleRate: state.pink.sampleRate || state.backgroundBefore.sampleRate || state.backgroundAfter.sampleRate || null,
       bands,
       usableBands
     };
@@ -788,6 +813,13 @@
       const stable = q.backgroundChangeDb <= 3;
       const rows = calibrationBands().map(center => {
         const item = q.bands?.[center] || {};
+        if (item.coverage === 'incomplete') {
+          return `<div class="calBandRow">
+            <span>${formatBand(center)}</span>
+            <strong>neúplné pásmo</strong>
+            <span class="calBandTag bad">nepoužít</span>
+          </div>`;
+        }
         const snr = Number(item.snrDb);
         const cls = classifySnr(snr);
         return `<div class="calBandRow">
@@ -798,15 +830,16 @@
       }).join('');
 
       const usable = q.usableBands?.length || 0;
-      const total = calibrationBands().length;
+      const coveredBands = calibrationBands().filter(center => q.bands?.[center]?.coverage !== 'incomplete');
+      const total = coveredBands.length;
       const statusLevel = overallSnr < 15 ? 'bad' : stable ? (usable === total ? 'good' : 'warn') : 'warn';
       const statusText = overallSnr < 15
         ? 'Celkový signál je příliš blízko hluku pozadí. Kalibraci zopakujte v tišším prostředí.'
         : !stable
           ? 'Hluk pozadí se během kalibrace změnil o více než 3 dB. Výsledek může být méně spolehlivý.'
           : usable === total
-            ? 'Všechna pásma mají dostatečný odstup od pozadí.'
-            : `${usable} z ${total} pásem lze použít. Pásma pod 15 dB se do frekvenční kalibrace nezahrnou.`;
+            ? 'Všechna plně měřitelná pásma mají dostatečný odstup od pozadí.'
+            : `${usable} z ${total} plně měřitelných pásem lze použít. Pásma pod 15 dB ani neúplná pásma se do frekvenční kalibrace nezahrnou.`;
 
       return `
         <div class="calWizardResult">
