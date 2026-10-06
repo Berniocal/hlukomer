@@ -1186,16 +1186,26 @@
         </div>`;
     }
 
-    if (stepIndex === 2 && state.linearityLow) {
+    if (stepIndex === 2 && state.backgroundBefore) {
       return `
         <div class="calWizardResult">
-          <div class="calResultRow"><span>Slabší signál</span><strong>${state.linearityLow.dbfs.toFixed(1)} dBFS</strong></div>
-          <div class="calStatus good">První úroveň změřena ✓<br>Počkejte na hlasitější úsek kolem 0:40.</div>
+          <div class="calResultRow"><span>Pozadí</span><strong>${state.backgroundBefore.dbfs.toFixed(1)} dBFS</strong></div>
+          <div class="calStatus good">Pozadí změřeno ✓<br>Teď počkejte na slabší růžový šum kolem 0:50.</div>
         </div>`;
     }
 
-    if (stepIndex === 3 && state.linearity) {
+    if (stepIndex === 3 && state.linearityLow) {
+      return `
+        <div class="calWizardResult">
+          <div class="calResultRow"><span>Slabší signál</span><strong>${state.linearityLow.dbfs.toFixed(1)} dBFS</strong></div>
+          <div class="calStatus good">První úroveň změřena ✓<br>Počkejte na hlasitější úsek kolem 1:10.</div>
+        </div>`;
+    }
+
+    if (stepIndex === 4 && state.linearity) {
       const l = state.linearity;
+      const measuredText = Number.isFinite(l.measuredDifferenceDb) ? l.measuredDifferenceDb.toFixed(1) + ' dB' : 'nelze určit';
+      const errorText = Number.isFinite(l.errorDb) ? (l.errorDb >= 0 ? '+' : '') + l.errorDb.toFixed(1) + ' dB' : '—';
       const text = l.clipping
         ? 'Záznam se dostal do limitace. Kalibraci nelze spolehlivě provést.'
         : l.level === 'good'
@@ -1206,14 +1216,10 @@
       return `
         <div class="calWizardResult">
           <div class="calResultRow"><span>Očekávaný rozdíl</span><strong>10,0 dB</strong></div>
-          <div class="calResultRow"><span>Naměřený rozdíl</span><strong>${l.measuredDifferenceDb.toFixed(1)} dB</strong></div>
-          <div class="calResultRow"><span>Odchylka</span><strong>${l.errorDb >= 0 ? '+' : ''}${l.errorDb.toFixed(1)} dB</strong></div>
+          <div class="calResultRow"><span>Naměřený rozdíl</span><strong>${measuredText}</strong></div>
+          <div class="calResultRow"><span>Odchylka</span><strong>${errorText}</strong></div>
           <div class="calStatus ${l.level}">${text}</div>
         </div>`;
-    }
-
-    if (stepIndex === 4 && state.backgroundBefore) {
-      return '<div class="calStatus good">První měření pozadí hotové ✓</div>';
     }
 
     if (stepIndex === 5 && state.pink) {
@@ -1328,7 +1334,7 @@
     if (stepIndex === 1 && state.room) {
       return classifyRoom(state.room.rt60Sec, state.room.earlyReflectionDb).overall !== 'bad';
     }
-    if (stepIndex === 3 && state.linearity) {
+    if (stepIndex === 4 && state.linearity) {
       return state.linearity.level !== 'bad';
     }
     if (stepIndex === 6 && state.quality) {
@@ -1340,9 +1346,9 @@
   function stepDone(stepIndex) {
     if (stepIndex === 0) return state.step > 0;
     if (stepIndex === 1) return Boolean(state.room);
-    if (stepIndex === 2) return Boolean(state.linearityLow);
-    if (stepIndex === 3) return Boolean(state.linearityHigh && state.linearity);
-    if (stepIndex === 4) return Boolean(state.backgroundBefore);
+    if (stepIndex === 2) return Boolean(state.backgroundBefore);
+    if (stepIndex === 3) return Boolean(state.linearityLow);
+    if (stepIndex === 4) return Boolean(state.linearityHigh && state.linearity);
     if (stepIndex === 5) return Boolean(state.pink);
     if (stepIndex === 6) return Boolean(state.backgroundAfter && state.quality);
     if (stepIndex === 7) return Boolean(state.white);
