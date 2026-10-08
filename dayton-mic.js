@@ -100,6 +100,12 @@
     else localStorage.removeItem(STORAGE_PROFILE);
   }
 
+  function measurementRunning() {
+    const transportStop = $('transportStopBtn');
+    const nativeStop = $('stopBtn');
+    return Boolean((transportStop && !transportStop.disabled) || (nativeStop && !nativeStop.disabled));
+  }
+
   function setEnabled(value) {
     enabled = Boolean(value);
     localStorage.setItem(STORAGE_ENABLED, enabled ? '1' : '0');
@@ -196,10 +202,21 @@
     }
 
     $('daytonMicEnabled')?.addEventListener('change', event => {
+      if (measurementRunning()) {
+        event.target.checked = enabled;
+        alert('Nejdřív ukončete probíhající měření.');
+        return;
+      }
       setEnabled(Boolean(event.target.checked));
     });
 
-    $('daytonMicLoadBtn')?.addEventListener('click', () => $('daytonMicFile')?.click());
+    $('daytonMicLoadBtn')?.addEventListener('click', () => {
+      if (measurementRunning()) {
+        alert('Nejdřív ukončete probíhající měření.');
+        return;
+      }
+      $('daytonMicFile')?.click();
+    });
 
     $('daytonMicFile')?.addEventListener('change', async event => {
       const file = event.target.files?.[0];
@@ -217,6 +234,10 @@
     });
 
     $('daytonMicRemoveBtn')?.addEventListener('click', () => {
+      if (measurementRunning()) {
+        alert('Nejdřív ukončete probíhající měření.');
+        return;
+      }
       if (!confirm('Odstranit uložený Dayton kalibrační profil?')) return;
       persistProfile(null);
       setEnabled(false);
