@@ -416,6 +416,8 @@
   }
 
   function calibrationDb(freq) {
+    const daytonCorrection = window.HLUKOMER_DAYTON?.correctionDb?.(freq);
+    if (Number.isFinite(daytonCorrection)) return daytonCorrection;
     return MATH.calibrationDb(freq, freqCalibration, CAL_FREQS);
   }
 
@@ -864,6 +866,10 @@
   }
 
   function calibrateCurrentFrequency() {
+    if (window.HLUKOMER_DAYTON?.isActive?.()) {
+      alert('Je aktivní individuální kalibrace mikrofonu Dayton. Ruční frekvenční kalibrace se proto nepoužije.');
+      return;
+    }
     if (!running || !Number.isFinite(lastPeakHz) || !Number.isFinite(lastRawDbfs)) {
       alert('Nejdřív spusť měření a pusť čistý tón.');
       return;
@@ -1024,6 +1030,10 @@
   fftSizeSelect.addEventListener('change', changeFftSize);
   spectrumMode.addEventListener('change', saveSettings);
   freqScale.addEventListener('change', saveSettings);
+
+  window.addEventListener('hlukomer-dayton-calibration-change', () => {
+    resetCurrentMeasurement();
+  });
 
   renderCalibrationGrid();
   renderUnits();
