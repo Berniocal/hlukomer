@@ -74,6 +74,9 @@
   let measurementSpl = true;
   let measurementOffset = 40;
   let measurementCalibration = {};
+  let measurementCalibrationCenters = OCTAVES;
+  let measurementCalibrationSource = 'manual';
+  let measurementCalibrationSerial = null;
   let measurementCalibrated = false;
   let measurementBandCoverage = octaveMap(null);
   let targetSeconds = 5;
@@ -347,14 +350,29 @@
   }
 
   function loadCalibration() {
+    const dayton = window.HLUKOMER_DAYTON?.getActiveCalibration?.();
+    if (dayton?.centers?.length && dayton?.values) {
+      return {
+        values: dayton.values,
+        centers: dayton.centers,
+        source: 'dayton',
+        serial: dayton.serial || null
+      };
+    }
+
     try {
       const parsed = JSON.parse(localStorage.getItem('hlukomer.freqCalibration.v2') || '{}');
-      return Object.fromEntries(OCTAVES.map(f => {
-        const n = Number(parsed[f]);
-        return [f, Number.isFinite(n) ? n : 0];
-      }));
+      return {
+        values: Object.fromEntries(OCTAVES.map(f => {
+          const n = Number(parsed[f]);
+          return [f, Number.isFinite(n) ? n : 0];
+        })),
+        centers: OCTAVES,
+        source: 'manual',
+        serial: null
+      };
     } catch (_) {
-      return octaveMap(0);
+      return { values: octaveMap(0), centers: OCTAVES, source: 'manual', serial: null };
     }
   }
 
@@ -363,7 +381,7 @@
   }
 
   function calibrationDb(freq) {
-    return MATH.calibrationDb(freq, measurementCalibration, OCTAVES);
+    return MATH.calibrationDb(freq, measurementCalibration, measurementCalibrationCenters);
   }
 
   function currentSnapshot() {
@@ -443,6 +461,7 @@
     const snapshot = MATH.analyzeTimeBlock(samples, sampleRate, {
       centers: OCTAVES,
       calibration: measurementCalibration,
+      calibrationCenters: measurementCalibrationCenters,
       analysisMaxHz: 20000,
       offsetDb: measurementSpl ? measurementOffset : 0
     });
@@ -492,7 +511,11 @@
     measurementWeighting = weighting?.value || 'A';
     measurementSpl = !!showSPL?.checked;
     measurementOffset = loadNumber('hlukomer.offsetDB.v2', loadNumber('noiseMeterOffsetDB', 40));
-    measurementCalibration = loadCalibration();
+    const activeCalibration = loadCalibration();
+    measurementCalibration = activeCalibration.values;
+    measurementCalibrationCenters = activeCalibration.centers;
+    measurementCalibrationSource = activeCalibration.source;
+    measurementCalibrationSerial = activeCalibration.serial;
     measurementCalibrated = localStorage.getItem(LS.calibrationState) !== null && localStorage.getItem(LS.calibrationState) !== 'uncalibrated';
     targetSeconds = clampSeconds(Number(timedSeconds.value));
 
@@ -708,6 +731,9 @@
       maxC: Number.isFinite(maxLeq1.C) ? Number(maxLeq1.C.toFixed(2)) : null,
       minZ: Number.isFinite(minLeq1.Z) ? Number(minLeq1.Z.toFixed(2)) : null,
       maxZ: Number.isFinite(maxLeq1.Z) ? Number(maxLeq1.Z.toFixed(2)) : null,
+      microphoneCalibration: measurementCalibrationSource === 'dayton'
+        ? { type: 'dayton', serial: measurementCalibrationSerial }
+        : { type: 'manual' },
       octavesA,
       octavesZ
     });
