@@ -297,6 +297,7 @@
       maxC: finiteOrNull(item.maxC ?? (legacyWeight === 'C' ? item.max : null)),
       minZ: finiteOrNull(item.minZ ?? (legacyWeight === 'Z' ? item.min : null)),
       maxZ: finiteOrNull(item.maxZ ?? (legacyWeight === 'Z' ? item.max : null)),
+      microphoneCalibration: objectOrEmpty(item.microphoneCalibration),
       octavesA,
       octavesZ
     };
@@ -884,7 +885,7 @@
     }
 
     const rows = [[
-      'Název','Datum','Čas','Délka [s]','Režim','Hladina','Kalibrace SPL',
+      'Název','Datum','Čas','Délka [s]','Režim','Hladina','Kalibrace SPL','Kalibrace mikrofonu',
       'Leq A [dB]','Leq C [dB]','Leq Z [dB]',
       'Minimum Leq 1 s A [dB]','Maximum Leq 1 s A [dB]',
       ...OCTAVES.map(f => octaveHeader(f, 'A')),
@@ -901,6 +902,9 @@
         item.timed ? 'časované' : 'ruční',
         item.spl ? 'SPL' : 'dBFS',
         item.calibrated === true ? 'ano' : item.calibrated === false ? 'ne' : '',
+        item.microphoneCalibration?.type === 'dayton'
+          ? `Dayton ${item.microphoneCalibration.serial || ''}`.trim()
+          : 'ruční / bez profilu',
         numCs(item.leqA),
         numCs(item.leqC),
         numCs(item.leqZ),
