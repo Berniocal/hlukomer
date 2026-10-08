@@ -1,13 +1,19 @@
-/* Dayton iMM-6 / iMM-6C – import individuální frekvenční kalibrace. */
+/* Dayton iMM-6 / iMM-6C – import individuální frekvenční kalibrace a výběr vstupu. */
 (() => {
   'use strict';
 
   const STORAGE_PROFILE = 'hlukomer.daytonMic.profile.v1';
   const STORAGE_ENABLED = 'hlukomer.daytonMic.enabled.v1';
+  const STORAGE_DEVICE_ID = 'hlukomer.daytonMic.deviceId.v1';
+  const STORAGE_DEVICE_LABEL = 'hlukomer.daytonMic.deviceLabel.v1';
   const $ = id => document.getElementById(id);
 
   let profile = readProfile();
   let enabled = localStorage.getItem(STORAGE_ENABLED) === '1';
+  let selectedDeviceId = localStorage.getItem(STORAGE_DEVICE_ID) || '';
+  let selectedDeviceLabel = localStorage.getItem(STORAGE_DEVICE_LABEL) || '';
+  let availableInputs = [];
+  let activeTrackInfo = null;
 
   function safeNumber(value) {
     if (value === null || value === undefined || value === '') return null;
@@ -101,6 +107,16 @@
     else localStorage.removeItem(STORAGE_PROFILE);
   }
 
+  function persistDevice(deviceId, label) {
+    selectedDeviceId = String(deviceId || '');
+    selectedDeviceLabel = String(label || '');
+    if (selectedDeviceId) localStorage.setItem(STORAGE_DEVICE_ID, selectedDeviceId);
+    else localStorage.removeItem(STORAGE_DEVICE_ID);
+    if (selectedDeviceLabel) localStorage.setItem(STORAGE_DEVICE_LABEL, selectedDeviceLabel);
+    else localStorage.removeItem(STORAGE_DEVICE_LABEL);
+    activeTrackInfo = null;
+  }
+
   function measurementRunning() {
     const transportStop = $('transportStopBtn');
     const nativeStop = $('stopBtn');
@@ -110,9 +126,10 @@
   function setEnabled(value) {
     enabled = Boolean(value);
     localStorage.setItem(STORAGE_ENABLED, enabled ? '1' : '0');
+    activeTrackInfo = null;
     render();
     window.dispatchEvent(new CustomEvent('hlukomer-dayton-calibration-change', {
-      detail: { enabled, hasProfile: Boolean(profile) }
+      detail: { enabled, hasProfile: Boolean(profile), deviceId: selectedDeviceId || null }
     }));
   }
 
@@ -165,6 +182,199 @@
     return `${Number(freq.toFixed(1))} Hz`;
   }
 
+  function baseAudioConstraints() {
+    return {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      channelCount: 1
+    };
+  }
+
+  function validateBeforeStart() {
+    if (!isActive()) return { ok: true };
+    if (!selectedDeviceId) {
+      return {
+        ok: false,
+        message: 'Je zapnutý referenční mikrofon Dayton, ale není vybraný zvukový vstup. Otevřete „Referenční mikrofon Dayton“, načtěte dostupné mikrofony a vyberte Dayton.'
+      };
+    }
+    return { ok: true };
+  }
+
+  function getAudioConstraints() {
+    const constraints = baseAudioConstraints();
+    if (isActive() && selectedDeviceId) constraints.deviceId = { exact: selectedDeviceId };
+    return constraints;
+  }
+
+  function selectedDevice() {
+    return availableInputs.find(device => device.deviceId === selectedDeviceId) || null;
+  }
+
+  function deviceDisplayName(device, index = 0) {
+    const label = String(device?.label || '').trim();
+    return label || `Mikrofon ${index + 1}`;
+  }
+
+  async function enumerateAudioInputs(requestPermission = false) {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      throw new Error('Tento prohlížeč neumí vypsat dostupné mikrofony.');
+    }
+    if (measurementRunning()) {
+      throw new Error('Nejdřív ukončete probíhající měření.');
+    }
+
+    let permissionStream = null;
+    try {
+      if (requestPermission && navigator.mediaDevices?.getUserMedia) {
+        permissionStream = await navigator.mediaDevices.getUserMedia({ audio: baseAudioConstraints() });
+      }
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      availableInputs = devices.filter(device => device.kind === 'audioinput');
+
+      if (selectedDeviceId && !availableInputs.some(device => device.deviceId === selectedDeviceId) && selectedDeviceLabel) {
+        const byLabel = availableInputs.find(device => device.label && device.label === selectedDeviceLabel);
+        if (byLabel) persistDevice(byLabel.deviceId, byLabel.label);
+      }
+
+      renderDeviceOptions();
+      render();
+      return availableInputs.slice();
+    } finally {
+      permissionStream?.getTracks?.().forEach(track => track.stop());
+    }
+  }
+
+  function renderDeviceOptions() {
+    const select = $('daytonMicDevice');
+    if (!select) return;
+
+    const currentId = selectedDeviceId;
+    select.innerHTML = '';
+
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = availableInputs.length
+      ? 'Vyberte mikrofon…'
+      : 'Nejdřív načtěte mikrofony';
+    select.appendChild(placeholder);
+
+    availableInputs.forEach((device, index) => {
+      const option = document.createElement('option');
+      option.value = device.deviceId;
+      option.textContent = deviceDisplayName(device, index);
+      select.appendChild(option);
+    });
+
+    if (currentId && availableInputs.some(device => device.deviceId === currentId)) {
+      select.value = currentId;
+    } else {
+      select.value = '';
+    }
+  }
+
+  function reportActiveTrack(track) {
+    if (!isActive()) {
+      activeTrackInfo = null;
+      render();
+      return { ok: true };
+    }
+
+    let settings = {};
+    try { settings = typeof track?.getSettings === 'function' ? track.getSettings() : {}; }
+    catch (_) { settings = {}; }
+
+    const actualId = String(settings.deviceId || '');
+    const label = String(track?.label || '').trim() || 'Neznámý mikrofon';
+    const idConfirmed = Boolean(actualId && selectedDeviceId);
+    const matches = !idConfirmed || actualId === selectedDeviceId;
+
+    activeTrackInfo = {
+      label,
+      actualId,
+      matches,
+      idConfirmed
+    };
+    render();
+
+    return {
+      ok: matches,
+      label,
+      message: matches
+        ? null
+        : 'Prohlížeč spustil jiný mikrofon, než který je vybraný v nastavení Dayton.'
+    };
+  }
+
+  function clearActiveTrack() {
+    activeTrackInfo = null;
+    render();
+  }
+
+  function renderProfileStatus() {
+    const status = $('daytonMicStatus');
+    const remove = $('daytonMicRemoveBtn');
+    if (!status || !remove) return;
+
+    remove.hidden = !profile;
+    status.className = 'daytonMicStatus';
+
+    if (!enabled) {
+      status.textContent = '';
+      return;
+    }
+    if (!profile) {
+      status.classList.add('warn');
+      status.textContent = 'Nahrajte individuální kalibrační TXT soubor vašeho mikrofonu Dayton.';
+      return;
+    }
+
+    const first = profile.points[0][0];
+    const last = profile.points[profile.points.length - 1][0];
+    const identity = profile.serial || profile.fileName || 'Dayton iMM';
+    const sensitivity = Number.isFinite(profile.sensitivity1000HzDb)
+      ? ` · citlivost 1 kHz ${profile.sensitivity1000HzDb.toFixed(1).replace('.', ',')} dB`
+      : '';
+    status.classList.add('good');
+    status.textContent = `${identity} · ${profile.points.length} bodů · ${formatFrequency(first)}–${formatFrequency(last)}${sensitivity} · frekvenční korekce aktivní`;
+  }
+
+  function renderDeviceStatus() {
+    const status = $('daytonMicDeviceStatus');
+    if (!status) return;
+    status.className = 'daytonMicDeviceStatus';
+
+    if (!enabled) {
+      status.textContent = '';
+      return;
+    }
+
+    if (!selectedDeviceId) {
+      status.classList.add('warn');
+      status.textContent = 'Zvukový vstup ještě není vybraný.';
+      return;
+    }
+
+    if (activeTrackInfo) {
+      if (!activeTrackInfo.matches) {
+        status.classList.add('bad');
+        status.textContent = `✕ Aktivní vstup: ${activeTrackInfo.label} · neodpovídá vybranému mikrofonu`;
+        return;
+      }
+      status.classList.add(activeTrackInfo.idConfirmed ? 'good' : 'warn');
+      status.textContent = activeTrackInfo.idConfirmed
+        ? `✓ Aktivní vstup ověřen: ${activeTrackInfo.label}`
+        : `Aktivní vstup: ${activeTrackInfo.label} · prohlížeč neposkytl ID pro úplné ověření`;
+      return;
+    }
+
+    const device = selectedDevice();
+    const label = device ? deviceDisplayName(device, availableInputs.indexOf(device)) : (selectedDeviceLabel || 'vybraný mikrofon');
+    status.classList.add('ready');
+    status.textContent = `Vybráno: ${label} · ověří se při spuštění měření`;
+  }
+
   function ensureUi() {
     if ($('daytonMicDetails')) return;
 
@@ -179,12 +389,20 @@
         <label class="check"><input type="checkbox" id="daytonMicEnabled"> Používám Dayton iMM-6 / iMM-6C</label>
         <div id="daytonMicPanel" class="daytonMicPanel" hidden>
           <div id="daytonMicStatus" class="daytonMicStatus"></div>
+
+          <div class="daytonDeviceBlock">
+            <label for="daytonMicDevice">Používaný mikrofon</label>
+            <select id="daytonMicDevice"><option value="">Nejdřív načtěte mikrofony</option></select>
+            <button type="button" id="daytonMicRefreshBtn">Načíst dostupné mikrofony</button>
+            <div id="daytonMicDeviceStatus" class="daytonMicDeviceStatus"></div>
+          </div>
+
           <div class="row">
             <button type="button" id="daytonMicLoadBtn">Nahrát kalibrační soubor</button>
             <button type="button" id="daytonMicRemoveBtn" class="danger" hidden>Odstranit profil</button>
           </div>
           <input type="file" id="daytonMicFile" accept=".txt,text/plain" hidden>
-          <div class="calSmall">Použije se kompletní frekvenční křivka z individuálního souboru Dayton. Citlivost při 1 kHz se zatím nepoužívá pro absolutní SPL.</div>
+          <div class="calSmall">Při aktivním Dayton profilu aplikace použije pouze vybraný mikrofon. Pokud vybraný vstup není dostupný, měření se nespustí. Citlivost při 1 kHz se zatím nepoužívá pro absolutní SPL.</div>
         </div>
       </div>`;
 
@@ -194,10 +412,15 @@
       const style = document.createElement('style');
       style.id = 'daytonMicStyles';
       style.textContent = `
-        .daytonMicPanel{display:grid;gap:9px}
-        .daytonMicStatus{padding:9px 10px;border:1px solid var(--line);background:var(--card2);border-radius:11px;font-size:12px;line-height:1.45;color:var(--muted)}
-        .daytonMicStatus.good{border-color:#245f49;background:#123329;color:#b8f3d5}
-        .daytonMicStatus.warn{border-color:#756020;background:#3a3015;color:#f8e7a1}
+        .daytonMicPanel{display:grid;gap:10px}
+        .daytonMicStatus,.daytonMicDeviceStatus{padding:9px 10px;border:1px solid var(--line);background:var(--card2);border-radius:11px;font-size:12px;line-height:1.45;color:var(--muted)}
+        .daytonMicStatus.good,.daytonMicDeviceStatus.good{border-color:#245f49;background:#123329;color:#b8f3d5}
+        .daytonMicStatus.warn,.daytonMicDeviceStatus.warn{border-color:#756020;background:#3a3015;color:#f8e7a1}
+        .daytonMicDeviceStatus.bad{border-color:#743645;background:#3a2029;color:#ffd2d9}
+        .daytonMicDeviceStatus.ready{border-color:#33506a;background:#102538;color:#c8e9f7}
+        .daytonDeviceBlock{display:grid;gap:7px;padding:10px;border:1px solid var(--line);border-radius:12px;background:#0d1725}
+        .daytonDeviceBlock>label{font-size:11px;color:var(--muted);font-weight:750}
+        .daytonDeviceBlock select,.daytonDeviceBlock button{width:100%}
       `;
       document.head.appendChild(style);
     }
@@ -209,6 +432,40 @@
         return;
       }
       setEnabled(Boolean(event.target.checked));
+    });
+
+    $('daytonMicRefreshBtn')?.addEventListener('click', async event => {
+      if (measurementRunning()) {
+        alert('Nejdřív ukončete probíhající měření.');
+        return;
+      }
+      const button = event.currentTarget;
+      const oldText = button.textContent;
+      button.disabled = true;
+      button.textContent = 'Načítám…';
+      try {
+        await enumerateAudioInputs(true);
+        if (!availableInputs.length) alert('Prohlížeč nenašel žádný mikrofonní vstup.');
+      } catch (error) {
+        alert(error?.message || 'Mikrofony se nepodařilo načíst.');
+      } finally {
+        button.disabled = false;
+        button.textContent = oldText;
+      }
+    });
+
+    $('daytonMicDevice')?.addEventListener('change', event => {
+      if (measurementRunning()) {
+        renderDeviceOptions();
+        alert('Nejdřív ukončete probíhající měření.');
+        return;
+      }
+      const device = availableInputs.find(item => item.deviceId === event.target.value);
+      persistDevice(device?.deviceId || '', device?.label || '');
+      render();
+      window.dispatchEvent(new CustomEvent('hlukomer-dayton-device-change', {
+        detail: { deviceId: selectedDeviceId || null, label: selectedDeviceLabel || null }
+      }));
     });
 
     $('daytonMicLoadBtn')?.addEventListener('click', () => {
@@ -245,40 +502,20 @@
     });
 
     render();
+    enumerateAudioInputs(false).catch(() => {});
   }
 
   function render() {
     ensureUi();
     const check = $('daytonMicEnabled');
     const panel = $('daytonMicPanel');
-    const status = $('daytonMicStatus');
-    const remove = $('daytonMicRemoveBtn');
-    if (!check || !panel || !status || !remove) return;
+    if (!check || !panel) return;
 
     check.checked = enabled;
     panel.hidden = !enabled;
-    remove.hidden = !profile;
-
-    status.className = 'daytonMicStatus';
-    if (!enabled) {
-      status.textContent = '';
-      return;
-    }
-
-    if (!profile) {
-      status.classList.add('warn');
-      status.textContent = 'Nahrajte individuální kalibrační TXT soubor vašeho mikrofonu Dayton.';
-      return;
-    }
-
-    const first = profile.points[0][0];
-    const last = profile.points[profile.points.length - 1][0];
-    const identity = profile.serial || profile.fileName || 'Dayton iMM';
-    const sensitivity = Number.isFinite(profile.sensitivity1000HzDb)
-      ? ` · citlivost 1 kHz ${profile.sensitivity1000HzDb.toFixed(1).replace('.', ',')} dB`
-      : '';
-    status.classList.add('good');
-    status.textContent = `${identity} · ${profile.points.length} bodů · ${formatFrequency(first)}–${formatFrequency(last)}${sensitivity} · frekvenční korekce aktivní`;
+    renderDeviceOptions();
+    renderProfileStatus();
+    renderDeviceStatus();
   }
 
   window.HLUKOMER_DAYTON = Object.freeze({
@@ -288,9 +525,21 @@
     isEnabled: () => enabled,
     isActive,
     correctionDb,
-    setEnabled
+    setEnabled,
+    enumerateAudioInputs,
+    getSelectedDevice: () => ({
+      deviceId: selectedDeviceId || null,
+      label: selectedDeviceLabel || null
+    }),
+    validateBeforeStart,
+    getAudioConstraints,
+    reportActiveTrack,
+    clearActiveTrack
   });
 
   ensureUi();
   window.addEventListener('DOMContentLoaded', ensureUi);
+  navigator.mediaDevices?.addEventListener?.('devicechange', () => {
+    if (!measurementRunning()) enumerateAudioInputs(false).catch(() => {});
+  });
 })();
