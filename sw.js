@@ -1,17 +1,17 @@
-const CACHE = "noise-meter-v29";
+const CACHE = "noise-meter-v30";
 const ASSETS = [
   "./",
-  "./index.html?v=29",
-  "./acoustic-math.js?v=29",
-  "./dayton-mic.js?v=29",
-  "./measurement-worklet.js?v=29",
-  "./app.js?v=29",
-  "./timed.js?v=29",
-  "./calibration-profiles.js?v=29",
-  "./calibration-track.js?v=29",
-  "./manifest.webmanifest?v=29",
+  "./index.html?v=30",
+  "./acoustic-math.js?v=30",
+  "./dayton-mic.js?v=30",
+  "./measurement-worklet.js?v=30",
+  "./app.js?v=30",
+  "./timed.js?v=30",
+  "./calibration-profiles.js?v=30",
+  "./calibration-track.js?v=30",
+  "./manifest.webmanifest?v=30",
   "./testy.html",
-  "./synthetic-tests.js?v=29",
+  "./synthetic-tests.js?v=30",
   "./icons/icon-192.png",
   "./icons/icon-512.png"
 ];
