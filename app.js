@@ -137,7 +137,7 @@
     if (!audioCtx?.audioWorklet || typeof AudioWorkletNode !== 'function') return false;
 
     try {
-      await audioCtx.audioWorklet.addModule('measurement-worklet.js?v=28');
+      await audioCtx.audioWorklet.addModule('measurement-worklet.js?v=29');
       captureWorkletNode = new AudioWorkletNode(audioCtx, 'hlukomer-capture', {
         numberOfInputs: 1,
         numberOfOutputs: 1,
