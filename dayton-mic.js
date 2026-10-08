@@ -10,8 +10,15 @@
   let enabled = localStorage.getItem(STORAGE_ENABLED) === '1';
 
   function safeNumber(value) {
+    if (value === null || value === undefined || value === '') return null;
     const n = Number(value);
     return Number.isFinite(n) ? n : null;
+  }
+
+  function measurementRunning() {
+    const nativeStop = $('stopBtn');
+    const transportStop = $('transportStopBtn');
+    return Boolean((nativeStop && !nativeStop.disabled) || (transportStop && !transportStop.disabled));
   }
 
   function readProfile() {
