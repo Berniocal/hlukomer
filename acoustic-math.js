@@ -68,15 +68,17 @@
     if (f >= centers[centers.length - 1]) return get(centers[centers.length - 1]);
 
     const lf = Math.log(f);
-    for (let i = 0; i < centers.length - 1; i += 1) {
-      const f1 = centers[i];
-      const f2 = centers[i + 1];
-      if (f >= f1 && f <= f2) {
-        const t = (lf - Math.log(f1)) / (Math.log(f2) - Math.log(f1));
-        return get(f1) + (get(f2) - get(f1)) * t;
-      }
+    let lo = 0;
+    let hi = centers.length - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (centers[mid] <= f) lo = mid;
+      else hi = mid;
     }
-    return 0;
+    const f1 = centers[lo];
+    const f2 = centers[hi];
+    const t = (lf - Math.log(f1)) / (Math.log(f2) - Math.log(f1));
+    return get(f1) + (get(f2) - get(f1)) * t;
   }
 
   function octaveBounds(center) {
@@ -184,6 +186,9 @@
       ? options.centers.map(Number).filter(Number.isFinite)
       : DEFAULT_OCTAVES;
     const calibration = options.calibration || {};
+    const calibrationCenters = Array.isArray(options.calibrationCenters) && options.calibrationCenters.length
+      ? options.calibrationCenters.map(Number).filter(Number.isFinite).sort((a, b) => a - b)
+      : centers;
     const analysisMaxHz = Number(options.analysisMaxHz) || 20000;
     const offsetDb = Number(options.offsetDb) || 0;
 
@@ -219,7 +224,7 @@
       if (!(p > 0)) continue;
 
       rawSpectrumPower += p;
-      const cal = calibrationDb(freq, calibration, centers);
+      const cal = calibrationDb(freq, calibration, calibrationCenters);
       const pZ = p * Math.pow(10, cal / 10);
       const pA = pZ * Math.pow(10, weightDb(freq, 'A') / 10);
       const pC = pZ * Math.pow(10, weightDb(freq, 'C') / 10);
