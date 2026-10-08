@@ -342,6 +342,7 @@
       input.min = '-30';
       input.max = '30';
       input.value = Number(freqCalibration[freq] || 0).toFixed(1);
+      input.disabled = Boolean(window.HLUKOMER_DAYTON?.isActive?.());
       input.setAttribute('aria-label', `Korekce ${formatFreq(freq)} v dB`);
       input.addEventListener('input', () => {
         const v = Number(input.value);
@@ -1032,10 +1033,18 @@
   freqScale.addEventListener('change', saveSettings);
 
   window.addEventListener('hlukomer-dayton-calibration-change', () => {
+    const daytonActive = Boolean(window.HLUKOMER_DAYTON?.isActive?.());
+    if (freqCalBtn) freqCalBtn.disabled = daytonActive;
+    if (zeroCalBtn) zeroCalBtn.disabled = daytonActive;
+    renderCalibrationGrid();
     resetCurrentMeasurement();
   });
 
   renderCalibrationGrid();
+  if (window.HLUKOMER_DAYTON?.isActive?.()) {
+    if (freqCalBtn) freqCalBtn.disabled = true;
+    if (zeroCalBtn) zeroCalBtn.disabled = true;
+  }
   renderUnits();
   renderSavedMeasurements();
   updateResolutionNote();
