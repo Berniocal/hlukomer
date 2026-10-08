@@ -52,6 +52,7 @@ self.addEventListener("fetch", event => {
     url.pathname.endsWith("/index.html") ||
     url.pathname.endsWith("/testy.html") ||
     url.pathname.endsWith("/acoustic-math.js") ||
+    url.pathname.endsWith("/dayton-mic.js") ||
     url.pathname.endsWith("/measurement-worklet.js") ||
     url.pathname.endsWith("/synthetic-tests.js") ||
     url.pathname.endsWith("/app.js") ||
