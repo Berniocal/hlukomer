@@ -137,7 +137,7 @@
     if (!audioCtx?.audioWorklet || typeof AudioWorkletNode !== 'function') return false;
 
     try {
-      await audioCtx.audioWorklet.addModule('measurement-worklet.js?v=29');
+      await audioCtx.audioWorklet.addModule('measurement-worklet.js?v=30');
       captureWorkletNode = new AudioWorkletNode(audioCtx, 'hlukomer-capture', {
         numberOfInputs: 1,
         numberOfOutputs: 1,
@@ -281,6 +281,11 @@
       micProcessingStatus.textContent = `Skutečné nastavení: ${parts.join(' · ')}`;
       micProcessingStatus.classList.toggle('good', active.length === 0 && unknown.length === 0);
       micProcessingStatus.classList.toggle('warn', active.length > 0);
+    }
+    const daytonVerification = window.HLUKOMER_DAYTON?.reportActiveTrack?.(track);
+    if (daytonVerification && daytonVerification.ok === false) {
+      status.daytonMismatch = true;
+      status.daytonMessage = daytonVerification.message || 'Aktivní mikrofon neodpovídá vybranému vstupu Dayton.';
     }
     return status;
   }
@@ -589,21 +594,53 @@
   async function start() {
     if (running) return;
     permWarn.style.display = 'none';
+
+    const daytonCheck = window.HLUKOMER_DAYTON?.validateBeforeStart?.();
+    if (daytonCheck && daytonCheck.ok === false) {
+      setStatus('vyber mikrofon');
+      alert(daytonCheck.message || 'Vyberte mikrofon Dayton.');
+      document.getElementById('daytonMicDetails')?.setAttribute('open', '');
+      return;
+    }
+
     setStatus('mikrofon…');
+    const audioConstraints = window.HLUKOMER_DAYTON?.getAudioConstraints?.() || {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      channelCount: 1
+    };
+
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 }
-      });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
     } catch (err) {
       console.error(err);
-      setStatus('mikrofon nepovolen');
+      if (window.HLUKOMER_DAYTON?.isActive?.()) {
+        setStatus('Dayton nedostupný');
+        permWarn.textContent = 'Vybraný mikrofon Dayton není dostupný. Zkontrolujte USB-C připojení a znovu načtěte dostupné mikrofony.';
+        document.getElementById('daytonMicDetails')?.setAttribute('open', '');
+      } else {
+        setStatus('mikrofon nepovolen');
+        permWarn.textContent = 'Mikrofon není dostupný.';
+      }
       permWarn.style.display = 'block';
       return;
     }
 
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     await audioCtx.resume();
-    inspectMicrophoneTrack(stream.getAudioTracks?.()[0]);
+    const micStatus = inspectMicrophoneTrack(stream.getAudioTracks?.()[0]);
+    if (micStatus?.daytonMismatch) {
+      stream?.getTracks().forEach(t => t.stop());
+      stream = null;
+      await audioCtx.close().catch(() => {});
+      audioCtx = null;
+      setStatus('špatný mikrofon');
+      permWarn.textContent = micStatus.daytonMessage;
+      permWarn.style.display = 'block';
+      document.getElementById('daytonMicDetails')?.setAttribute('open', '');
+      return;
+    }
     source = audioCtx.createMediaStreamSource(stream);
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = Number(fftSizeSelect.value);
@@ -655,6 +692,7 @@
     captureWorkletSink = null;
     setContinuousCaptureMode(false);
     stream?.getTracks().forEach(t => t.stop());
+    window.HLUKOMER_DAYTON?.clearActiveTrack?.();
     audioCtx?.close();
     stream = source = analyser = audioCtx = null;
     timeData = freqData = visualFreqData = null;
