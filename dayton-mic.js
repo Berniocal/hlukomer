@@ -15,12 +15,6 @@
     return Number.isFinite(n) ? n : null;
   }
 
-  function measurementRunning() {
-    const nativeStop = $('stopBtn');
-    const transportStop = $('transportStopBtn');
-    return Boolean((nativeStop && !nativeStop.disabled) || (transportStop && !transportStop.disabled));
-  }
-
   function readProfile() {
     try {
       const parsed = JSON.parse(localStorage.getItem(STORAGE_PROFILE) || 'null');
