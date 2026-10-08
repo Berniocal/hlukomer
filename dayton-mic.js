@@ -51,14 +51,14 @@
       const line = rawLine.trim();
       if (!line) continue;
 
-      const sensitivityMatch = line.match(/^\*\s*1000\s*Hz\s*[-:=]?\s*([-+]?\d+(?:[.,]\d+)?)/i);
+      const sensitivityMatch = line.match(/^\*\s*1000\s*Hz\s*(?:[:=]\s*)?([-+]?\d+(?:[.,]\d+)?)/i);
       if (sensitivityMatch) {
         sensitivity1000HzDb = Number(sensitivityMatch[1].replace(',', '.'));
         continue;
       }
 
       if (line.startsWith('*') || line.startsWith('#') || line.startsWith(';')) continue;
-      const match = line.match(/^([-+]?\d+(?:[.,]\d+)?)\s+(?:\s*)?([-+]?\d+(?:[.,]\d+)?)/);
+      const match = line.match(/^([-+]?\d+(?:[.,]\d+)?)\s+([-+]?\d+(?:[.,]\d+)?)/);
       if (!match) continue;
 
       const freq = Number(match[1].replace(',', '.'));
