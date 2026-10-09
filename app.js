@@ -137,7 +137,7 @@
     if (!audioCtx?.audioWorklet || typeof AudioWorkletNode !== 'function') return false;
 
     try {
-      await audioCtx.audioWorklet.addModule('measurement-worklet.js?v=32');
+      await audioCtx.audioWorklet.addModule('measurement-worklet.js?v=33');
       captureWorkletNode = new AudioWorkletNode(audioCtx, 'hlukomer-capture', {
         numberOfInputs: 1,
         numberOfOutputs: 1,
@@ -179,7 +179,7 @@
   let smoothedPower = NaN;
   let lastSmoothAt = 0;
   const HISTORY_FAST_MS = 125;
-  let historyFastAt = 0;
+  let historyWindowClockMs = 0;
   let historyFastSegments = [];
   let lastLoopAt = 0;
 
@@ -430,6 +430,14 @@
     return MATH.calibrationDb(freq, freqCalibration, CAL_FREQS);
   }
 
+  function activeFrequencyCalibration() {
+    const dayton = window.HLUKOMER_DAYTON?.getActiveCalibration?.();
+    if (dayton?.values && Array.isArray(dayton.centers) && dayton.centers.length) {
+      return { values: dayton.values, centers: dayton.centers };
+    }
+    return { values: freqCalibration, centers: CAL_FREQS };
+  }
+
   function computeRawRmsDbfs() {
     analyser.getFloatTimeDomainData(timeData);
     let sum = 0;
@@ -497,22 +505,22 @@
     return 10 * Math.log10(Math.max(smoothedPower, 1e-20));
   }
 
-  function fastHistoryDb(db, now) {
-    const power = Math.pow(10, db / 10);
+  function resetHistoryWindow() {
+    historyWindowClockMs = 0;
+    historyFastSegments = [];
+  }
 
-    if (!historyFastAt) {
-      historyFastAt = now;
-      historyFastSegments = [{ end: now, dt: 1, power }];
-      return db;
-    }
+  function pushHistoryPower(power, durationMs, timestamp = performance.now()) {
+    const p = Number(power);
+    const dt = Number(durationMs);
+    if (!(p > 0) || !(dt > 0)) return;
 
-    // Skutečné klouzavé Leq za posledních 125 ms.
-    // Po krátkém impulsu proto nevzniká dlouhý umělý exponenciální ocas.
-    const dt = Math.max(1, Math.min(HISTORY_FAST_MS, now - historyFastAt));
-    historyFastAt = now;
-    historyFastSegments.push({ end: now, dt, power });
+    const start = historyWindowClockMs;
+    const end = start + dt;
+    historyFastSegments.push({ start, end, power: p });
+    historyWindowClockMs = end;
 
-    const cutoff = now - HISTORY_FAST_MS;
+    const cutoff = end - HISTORY_FAST_MS;
     while (historyFastSegments.length && historyFastSegments[0].end <= cutoff) {
       historyFastSegments.shift();
     }
@@ -520,17 +528,41 @@
     let energy = 0;
     let duration = 0;
     for (const segment of historyFastSegments) {
-      const start = segment.end - segment.dt;
-      const overlap = Math.max(0, segment.end - Math.max(start, cutoff));
-      if (overlap <= 0) continue;
+      const overlap = Math.max(0, Math.min(segment.end, end) - Math.max(segment.start, cutoff));
+      if (!(overlap > 0)) continue;
       energy += segment.power * overlap;
       duration += overlap;
     }
+    if (!(energy > 0) || !(duration > 0)) return;
 
-    return duration > 0
-      ? 10 * Math.log10(Math.max(energy / duration, 1e-20))
-      : db;
+    history.push(MATH.powerToDb(energy / duration));
+    historyTimes.push(timestamp);
+    while (historyTimes.length && historyTimes[0] < timestamp - HISTORY_MS) {
+      historyTimes.shift();
+      history.shift();
+    }
   }
+
+  function addHistoryAudioBlock(samples, sampleRate) {
+    if (!running || window.HLUKOMER_CONTINUOUS_CAPTURE !== true) return;
+    if (!(samples instanceof Float32Array) || !(sampleRate > 0)) return;
+
+    const calibration = activeFrequencyCalibration();
+    const snapshot = MATH.analyzeTimeBlock(samples, sampleRate, {
+      centers: CAL_FREQS,
+      calibration: calibration.values,
+      calibrationCenters: calibration.centers,
+      analysisMaxHz: 20000,
+      offsetDb: showSPL.checked ? offsetDB : 0
+    });
+    const power = snapshot?.powers?.[weighting.value];
+    if (!(power > 0)) return;
+    pushHistoryPower(power, snapshot.durationMs, performance.now());
+  }
+
+  window.addEventListener('hlukomer-audio-block', event => {
+    addHistoryAudioBlock(event.detail?.samples, Number(event.detail?.sampleRate));
+  });
 
   function energyAverage(values) {
     return MATH.energyAverageDb(values);
@@ -557,8 +589,7 @@
     historyTimes.length = 0;
     smoothedPower = NaN;
     lastSmoothAt = 0;
-    historyFastAt = 0;
-    historyFastSegments = [];
+    resetHistoryWindow();
     lastLoopAt = 0;
     sessionId = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
     sessionStartedAt = new Date();
@@ -582,8 +613,7 @@
       historyTimes.length = 0;
       smoothedPower = NaN;
       lastSmoothAt = 0;
-      historyFastAt = 0;
-      historyFastSegments = [];
+      resetHistoryWindow();
       lastLoopAt = 0;
       sessionId = null;
       sessionStartedAt = null;
@@ -755,26 +785,21 @@
     const now = performance.now();
     const disp = smoothDb(rawDisplay, now);
 
-    if (lastLoopAt) {
-      const dt = Math.max(0, Math.min(250, now - lastLoopAt));
-      if (dt > 0) {
-        sessionEnergy += Math.pow(10, rawDisplay / 10) * dt;
-        sessionDurationMs += dt;
-      }
+    const frameDt = lastLoopAt ? Math.max(0, Math.min(250, now - lastLoopAt)) : 0;
+    if (frameDt > 0) {
+      sessionEnergy += Math.pow(10, rawDisplay / 10) * frameDt;
+      sessionDurationMs += frameDt;
     }
     lastLoopAt = now;
 
     minDB = Math.min(minDB, disp);
     maxDB = Math.max(maxDB, disp);
 
-    // Graf průběhu nepoužívá pomalé uživatelské vyhlazení.
-    // Každý bod je klouzavé Leq za skutečných posledních 125 ms.
-    const historyDb = fastHistoryDb(rawDisplay, now);
-    history.push(historyDb);
-    historyTimes.push(now);
-    while (historyTimes.length && historyTimes[0] < now - HISTORY_MS) {
-      historyTimes.shift();
-      history.shift();
+    // Graf průběhu je klouzavé Leq za posledních 125 ms.
+    // Na podporovaných prohlížečích vychází přímo z nepřekrývajících se AudioWorklet bloků,
+    // tedy ze stejného zvukového proudu jako přesné Leq měření. Bez Workletu použijeme zálohu.
+    if (window.HLUKOMER_CONTINUOUS_CAPTURE !== true && frameDt > 0) {
+      pushHistoryPower(Math.pow(10, rawDisplay / 10), frameDt, now);
     }
 
     if (sessionSamples.length < MAX_SESSION_SAMPLES && (!lastStoredSampleAt || now - lastStoredSampleAt >= 1000)) {
