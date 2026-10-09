@@ -26,7 +26,7 @@
 <div class="meter"><div id="bar"></div></div>
 <div class="stats"><div class="stat"><div class="k">Okamžitá</div><div class="v"><span id="instOut">--</span> dB</div></div><div class="stat"><div class="k">Maximum</div><div class="v"><span id="maxOut">--</span> dB</div></div><div class="stat"><div class="k">Minimum</div><div class="v"><span id="minOut">--</span> dB</div></div><div class="stat"><div class="k">Průměr 5 s</div><div class="v"><span id="avgOut">--</span> dB</div></div><div class="stat measureAvg"><div class="k">Průměr měření</div><div class="v"><span id="measureAvgOut">--</span> dB</div></div></div>
 </section>
-<section class="card"><div class="tabs"><button class="tab active" data-panel="spectrum">Spektrum</button><button class="tab" data-panel="history">Průběh</button></div><div id="spectrum" class="panel active"><div class="chartbar"><h2>Frekvence</h2><div class="chartcontrols"><select id="spectrumMode"><option value="line">Graf FFT</option><option value="bars">Sloupce 1/3 oktávy</option></select><select id="freqScale"><option value="log">Logaritmická osa</option><option value="linear">Lineární osa</option></select></div></div><canvas id="spectrumChart" width="1000" height="320"></canvas></div><div id="history" class="panel"><div class="chartbar"><h2>Hluk v čase · 125 ms</h2></div><canvas id="historyChart" width="1000" height="320"></canvas></div></section>
+<section class="card"><div class="tabs"><button class="tab active" data-panel="spectrum">Spektrum</button><button class="tab" data-panel="history">Průběh</button></div><div id="spectrum" class="panel active"><div class="chartbar"><h2>Frekvence</h2><div class="chartcontrols"><select id="spectrumMode"><option value="line">Graf FFT</option><option value="bars">Sloupce 1/3 oktávy</option></select><select id="freqScale"><option value="log">Logaritmická osa</option><option value="linear">Lineární osa</option></select></div></div><canvas id="spectrumChart" width="1000" height="320"></canvas></div><div id="history" class="panel"><div class="chartbar"><h2>Hluk v čase · Leq 125 ms</h2></div><canvas id="historyChart" width="1000" height="320"></canvas></div></section>
 </div>
 <aside class="card"><h2>Analýza</h2><div class="peak"><strong id="peakFreq">--</strong><span>Hz</span></div><div id="peakNote"></div><div class="quick"><label for="weighting">Vážení</label><select id="weighting"><option value="A">A</option><option value="C">C</option><option value="Z">Z</option></select><div class="switches"><label class="check"><input type="checkbox" id="showSPL" checked> dB SPL</label><label class="check"><input type="checkbox" id="holdPeak"> držet maximum</label></div></div>
 <details id="timedSeriesDetails" style="display:none" open><summary>Časovaná měření</summary><div class="detailbody"><div class="savedActions"><button id="exportTimedBtn">Stáhnout do Excelu</button><button class="danger" id="clearTimedBtn">Smazat vše</button></div><div class="timedList" id="timedMeasurements"></div></div></details>
@@ -42,12 +42,12 @@
 <details><summary>Technická nastavení</summary><div class="detailbody"><div id="micProcessingStatus" class="micProcessingStatus">Skutečné nastavení mikrofonu se ověří po spuštění měření.</div><div class="row"><select id="displayResponse"><option value="0.25">Rychlá odezva</option><option value="0.8" selected>Normální odezva</option><option value="1.5">Klidná odezva</option></select></div><div class="row"><select id="fftSize"><option>2048</option><option selected>4096</option><option>8192</option><option>16384</option><option>32768</option></select></div><div id="resolutionNote"></div></div></details>
 <div id="permWarn" class="warn">Mikrofon není dostupný.</div></aside>
 </main>
-<script src="acoustic-math.js?v=32"></script>
-<script src="dayton-mic.js?v=32"></script>
-<script src="calibration-profiles.js?v=32"></script>
-<script src="calibration-track.js?v=32"></script>
-<script src="reference-speaker.js?v=32"></script>
-<script src="app.js?v=32"></script>
-<script src="timed.js?v=32"></script>
+<script src="acoustic-math.js?v=33"></script>
+<script src="dayton-mic.js?v=33"></script>
+<script src="calibration-profiles.js?v=33"></script>
+<script src="calibration-track.js?v=33"></script>
+<script src="reference-speaker.js?v=33"></script>
+<script src="app.js?v=33"></script>
+<script src="timed.js?v=33"></script>
 </body>
 </html>
