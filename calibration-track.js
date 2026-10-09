@@ -418,6 +418,7 @@
   }
 
   function isRegularMeasurementRunning() {
+    if (window.HLUKOMER_REFERENCE_SPEAKER_RUNNING === true) return true;
     const transportStop = $('transportStopBtn');
     const nativeStop = $('stopBtn');
     return Boolean((transportStop && !transportStop.disabled) || (nativeStop && !nativeStop.disabled));
@@ -1454,6 +1455,8 @@
       if (!state.busy) closeScreen('calWizardScreen');
     }));
   }
+
+  window.HLUKOMER_CALIBRATION_TRACK = Object.freeze({ ...TRACK });
 
   function init() {
     ensureStyles();
