@@ -178,8 +178,9 @@
 
   let smoothedPower = NaN;
   let lastSmoothAt = 0;
-  let historyFastPower = NaN;
+  const HISTORY_FAST_MS = 125;
   let historyFastAt = 0;
+  let historyFastSegments = [];
   let lastLoopAt = 0;
 
   let sessionId = null;
@@ -497,18 +498,38 @@
   }
 
   function fastHistoryDb(db, now) {
-    const p = Math.pow(10, db / 10);
-    if (!Number.isFinite(historyFastPower) || !historyFastAt) {
-      historyFastPower = p;
+    const power = Math.pow(10, db / 10);
+
+    if (!historyFastAt) {
       historyFastAt = now;
+      historyFastSegments = [{ end: now, dt: 1, power }];
       return db;
     }
-    const dt = Math.max(1, Math.min(250, now - historyFastAt));
+
+    // Skutečné klouzavé Leq za posledních 125 ms.
+    // Po krátkém impulsu proto nevzniká dlouhý umělý exponenciální ocas.
+    const dt = Math.max(1, Math.min(HISTORY_FAST_MS, now - historyFastAt));
     historyFastAt = now;
-    const tauMs = 125;
-    const alpha = 1 - Math.exp(-dt / tauMs);
-    historyFastPower += alpha * (p - historyFastPower);
-    return 10 * Math.log10(Math.max(historyFastPower, 1e-20));
+    historyFastSegments.push({ end: now, dt, power });
+
+    const cutoff = now - HISTORY_FAST_MS;
+    while (historyFastSegments.length && historyFastSegments[0].end <= cutoff) {
+      historyFastSegments.shift();
+    }
+
+    let energy = 0;
+    let duration = 0;
+    for (const segment of historyFastSegments) {
+      const start = segment.end - segment.dt;
+      const overlap = Math.max(0, segment.end - Math.max(start, cutoff));
+      if (overlap <= 0) continue;
+      energy += segment.power * overlap;
+      duration += overlap;
+    }
+
+    return duration > 0
+      ? 10 * Math.log10(Math.max(energy / duration, 1e-20))
+      : db;
   }
 
   function energyAverage(values) {
@@ -536,8 +557,8 @@
     historyTimes.length = 0;
     smoothedPower = NaN;
     lastSmoothAt = 0;
-    historyFastPower = NaN;
     historyFastAt = 0;
+    historyFastSegments = [];
     lastLoopAt = 0;
     sessionId = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
     sessionStartedAt = new Date();
@@ -561,8 +582,8 @@
       historyTimes.length = 0;
       smoothedPower = NaN;
       lastSmoothAt = 0;
-      historyFastPower = NaN;
       historyFastAt = 0;
+      historyFastSegments = [];
       lastLoopAt = 0;
       sessionId = null;
       sessionStartedAt = null;
@@ -747,7 +768,7 @@
     maxDB = Math.max(maxDB, disp);
 
     // Graf průběhu nepoužívá pomalé uživatelské vyhlazení.
-    // Pro krátké impulsy používáme běžnou rychlou časovou odezvu 125 ms.
+    // Každý bod je klouzavé Leq za skutečných posledních 125 ms.
     const historyDb = fastHistoryDb(rawDisplay, now);
     history.push(historyDb);
     historyTimes.push(now);
