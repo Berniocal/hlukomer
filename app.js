@@ -178,6 +178,8 @@
 
   let smoothedPower = NaN;
   let lastSmoothAt = 0;
+  let historyFastPower = NaN;
+  let historyFastAt = 0;
   let lastLoopAt = 0;
 
   let sessionId = null;
@@ -494,6 +496,21 @@
     return 10 * Math.log10(Math.max(smoothedPower, 1e-20));
   }
 
+  function fastHistoryDb(db, now) {
+    const p = Math.pow(10, db / 10);
+    if (!Number.isFinite(historyFastPower) || !historyFastAt) {
+      historyFastPower = p;
+      historyFastAt = now;
+      return db;
+    }
+    const dt = Math.max(1, Math.min(250, now - historyFastAt));
+    historyFastAt = now;
+    const tauMs = 125;
+    const alpha = 1 - Math.exp(-dt / tauMs);
+    historyFastPower += alpha * (p - historyFastPower);
+    return 10 * Math.log10(Math.max(historyFastPower, 1e-20));
+  }
+
   function energyAverage(values) {
     return MATH.energyAverageDb(values);
   }
@@ -519,6 +536,8 @@
     historyTimes.length = 0;
     smoothedPower = NaN;
     lastSmoothAt = 0;
+    historyFastPower = NaN;
+    historyFastAt = 0;
     lastLoopAt = 0;
     sessionId = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
     sessionStartedAt = new Date();
@@ -542,6 +561,8 @@
       historyTimes.length = 0;
       smoothedPower = NaN;
       lastSmoothAt = 0;
+      historyFastPower = NaN;
+      historyFastAt = 0;
       lastLoopAt = 0;
       sessionId = null;
       sessionStartedAt = null;
@@ -724,7 +745,11 @@
 
     minDB = Math.min(minDB, disp);
     maxDB = Math.max(maxDB, disp);
-    history.push(disp);
+
+    // Graf průběhu nepoužívá pomalé uživatelské vyhlazení.
+    // Pro krátké impulsy používáme běžnou rychlou časovou odezvu 125 ms.
+    const historyDb = fastHistoryDb(rawDisplay, now);
+    history.push(historyDb);
     historyTimes.push(now);
     while (historyTimes.length && historyTimes[0] < now - HISTORY_MS) {
       historyTimes.shift();
