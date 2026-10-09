@@ -118,6 +118,7 @@
   }
 
   function measurementRunning() {
+    if (window.HLUKOMER_REFERENCE_SPEAKER_RUNNING === true) return true;
     const transportStop = $('transportStopBtn');
     const nativeStop = $('stopBtn');
     return Boolean((transportStop && !transportStop.disabled) || (nativeStop && !nativeStop.disabled));
